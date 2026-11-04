@@ -104,4 +104,4 @@ def test_monthly_rebuilt_only_when_daily_changes(folder):
 
     assert run(["--console", "--out", str(folder)]) == 0
     _, rows = _month(month)
-    assert rows["Вода 0,5"] == [0, 24, 6, 1, 2, 18]  # 29.10 ушёл в -3, 30.10 начался с 0; Долг вычитается
+    assert rows["Вода 0,5"] == [0, 24, 6, 1, 2, 19]  # 29.10 ушёл в -3, 30.10 начался с 0; Долг не вычитается

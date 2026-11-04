@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime as dt
 import re
+import unicodedata
 from copy import copy
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -36,6 +37,20 @@ CLEARED_COLS = (COL_INCOME, COL_SOLD, COL_DEBT, COL_WHO, COL_WRITEOFF, COL_REASO
 DEFAULT_SECTION_ROWS = ("Прочее",)
 DEFAULT_STAFF_ROWS = ("Утеря карт", "Наличие карт", "Администратор", "Тех персонал", "Охрана")
 
+# Название в UCS -> строка отчёта, когда они пишутся по-разному. Дополняется секцией [aliases] в settings.ini.
+DEFAULT_ALIASES = {
+    "Протеин 30гр": "Протеин порц",
+    "протеиновый коктейль (на молоке)": "Протеин порц",
+    "протеиновый коктейль на воде": "Протеин порц",
+    "конфета 20 грамм": "Конфеты штучно",
+    "RedBull 0.25": "Ред Булл",
+    "Бомбар Витамин и минерал": "Энергетик Бомбар Вит мин",
+    "Вода 1 л": "Вода 1",
+    "Вода 1,5 л": "Вода 1,5",
+    "энергетик вейк апп": "энергетик вейкапп",
+}
+DATE_FORMAT = r"dd\.mm\.yyyy"  # как в эталонном отчёте
+
 
 class ReportFormatError(Exception):
     pass
@@ -52,8 +67,9 @@ def report_filename(date: dt.date) -> str:
 
 
 def report_date(name: str) -> dt.date | None:
-    """Дата из имени дневного отчёта (оба формата) или None."""
-    m = REPORT_NAME_RE.match(name)
+    """Дата из имени дневного отчёта (оба формата) или None.
+    NFC: «ё» в имени файла может быть записана двумя символами (е + ◌̈)."""
+    m = REPORT_NAME_RE.match(unicodedata.normalize("NFC", name))
     if not m:
         return None
     fmt = "%Y-%m-%d" if "-" in m.group(1) else "%d.%m.%Y"
@@ -65,7 +81,7 @@ def find_reports(reports_dir: Path) -> dict[dt.date, Path]:
     found: dict[dt.date, Path] = {}
     if not reports_dir.is_dir():
         return found
-    for p in reports_dir.rglob(f"{REPORT_PREFIX}*.xlsx"):
+    for p in reports_dir.rglob("*.xlsx"):
         d = report_date(p.name)
         if d is None or not p.is_file():
             continue
@@ -150,8 +166,7 @@ def evening_value(ws: Worksheet, ws_values: Worksheet, cols: dict[str, int], r: 
     if isinstance(cached, (int, float)) and not isinstance(cached, bool):
         return float(cached)
     g = lambda col: _num(ws.cell(r, cols[col]).value)  # noqa: E731
-    debt = g(COL_DEBT) if COL_DEBT in cols else 0.0
-    return g(COL_MORNING) + g(COL_INCOME) - g(COL_SOLD) - debt - g(COL_WRITEOFF)
+    return g(COL_MORNING) + g(COL_INCOME) - g(COL_SOLD) - g(COL_WRITEOFF)
 
 
 def _insert_items(ws: Worksheet, lay: Layout, names: list[str]) -> None:
@@ -202,12 +217,13 @@ def build_report(
     output: Path,
     section_rows: tuple[str, ...] = DEFAULT_SECTION_ROWS,
     staff_rows: tuple[str, ...] = DEFAULT_STAFF_ROWS,
+    aliases: dict[str, str] = DEFAULT_ALIASES,
 ) -> BuildResult:
     """
     source — вчерашний отчёт (ОстУтро = вчерашний ОстВечер)
              или шаблон (ОстУтро берётся как есть, его вносят вручную при первом запуске).
-    Названия из UCS переносятся как есть: продажа идёт в строку с тем же названием,
-    а если такой строки нет — добавляется новая.
+    Названия из UCS сначала переводятся через aliases, затем продажа идёт в строку
+    с тем же названием, а если такой строки нет — добавляется новая.
     """
     wb = openpyxl.load_workbook(source)
     wb_values = openpyxl.load_workbook(source, data_only=True)  # значения формул, если файл сохранялся в Excel
@@ -228,7 +244,9 @@ def build_report(
     # 2. Продажи: суммируем по нормализованному названию, новые товары добавляем строками
     sold: dict[str, float] = {}
     new_names: dict[str, str] = {}
+    alias = {normalize(k): v for k, v in aliases.items()}
     for name, qty in sales.items():
+        name = alias.get(normalize(name), name)
         key = normalize(name)
         sold[key] = sold.get(key, 0) + qty
         if key not in lay.item_rows and key not in new_names:
@@ -242,7 +260,7 @@ def build_report(
     # 3. Заполнение
     date_cell = ws.cell(max(lay.header_row - 1, 1), NAME_COL)
     date_cell.value = date
-    date_cell.number_format = "DD.MM.YYYY"
+    date_cell.number_format = DATE_FORMAT
 
     L = lambda col: get_column_letter(c[col])  # noqa: E731
     for key, r in lay.item_rows.items():
@@ -256,9 +274,7 @@ def build_report(
             ws.cell(r, c[COL_SOLD]).value = _clean(s)
             result.filled.append((lay.item_names[key], s))
         ws.cell(r, c[COL_EVENING]).value = (
-            f"={L(COL_MORNING)}{r}+{L(COL_INCOME)}{r}-{L(COL_SOLD)}{r}"
-            + (f"-{L(COL_DEBT)}{r}" if COL_DEBT in c else "")
-            + f"-{L(COL_WRITEOFF)}{r}"
+            f"={L(COL_MORNING)}{r}+{L(COL_INCOME)}{r}-{L(COL_SOLD)}{r}-{L(COL_WRITEOFF)}{r}"
         )
         if m - (s or 0) < 0:
             result.negative.append((lay.item_names[key], m - (s or 0)))

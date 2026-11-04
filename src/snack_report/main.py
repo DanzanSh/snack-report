@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .report_builder import (
+    DEFAULT_ALIASES,
     DEFAULT_SECTION_ROWS,
     DEFAULT_STAFF_ROWS,
     BuildResult,
@@ -45,7 +46,8 @@ def bundled_template() -> Path:
 
 def load_settings(base: Path) -> dict:
     """Необязательный settings.ini рядом с exe (или в config/)."""
-    cfg = configparser.ConfigParser()
+    cfg = configparser.ConfigParser(delimiters=("=",))
+    cfg.optionxform = str  # названия товаров с сохранением регистра
     cfg.read([base / "config" / "settings.ini", base / "settings.ini"], encoding="utf-8-sig")
     resolve = lambda v: (base / v) if not Path(v).is_absolute() else Path(v)  # noqa: E731
 
@@ -54,11 +56,15 @@ def load_settings(base: Path) -> dict:
         return tuple(x.strip() for x in v.split(",") if x.strip()) if v is not None else default
 
     template = cfg.get("paths", "template", fallback=None)
+    aliases = dict(DEFAULT_ALIASES)
+    if cfg.has_section("aliases"):
+        aliases.update({k.strip(): v.strip() for k, v in cfg.items("aliases") if v.strip()})
     return {
         "reports_dir": resolve(cfg.get("paths", "reports_dir", fallback=DEFAULT_REPORT_DIR)),
         "template": resolve(template) if template else bundled_template(),
         "section_rows": rows("section_rows", DEFAULT_SECTION_ROWS),
         "staff_rows": rows("staff_rows", DEFAULT_STAFF_ROWS),
+        "aliases": aliases,
     }
 
 
@@ -152,6 +158,7 @@ def _build(job: Job, s: dict, folder: Path, out: Path, prev: Path | None = None)
         output=out,
         section_rows=s["section_rows"],
         staff_rows=s["staff_rows"],
+        aliases=s["aliases"],
     )
     log.info("Сохранено %s; заполнено %d; новых строк %d", out, len(res.filled), len(res.added))
     return res
