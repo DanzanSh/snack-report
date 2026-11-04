@@ -227,12 +227,19 @@ def test_aliases_sum_into_report_row(tmp_path, template):
     out = tmp_path / "out.xlsx"
     res = build_report(
         date=dt.date(2026, 11, 4),
-        sales={"протеиновый коктейль (на молоке)": 3, "Протеин 30гр": 1, "Протеин порц": 2, "Акция 3 посещения": 1},
+        sales={"протеиновый коктейль (на молоке)": 3, "протеиновый коктейль на воде": 1, "Протеин порц": 2,
+               "Протеин 30гр": 4, "Акция 3 посещения": 1, "Безлимит 1 месяц до 17-00": 2,
+               "Разовые посещения зал": 5, "Козинак МИНИ": 1},
         source=template, from_template=True, output=out,
     )
     ws, row = _rows(out)
     assert ws.cell(row["Протеин порц"], 4).value == 6
-    assert res.added == ["Акция 3 посещения"]  # незнакомое название — новая строка
+    assert ws.cell(row["Протеин в пачках штучно"], 4).value == 4
+    # абонементы не попадают в отчёт, «Разовые посещения зал» — строка отчёта
+    assert res.ignored == ["Акция 3 посещения", "Безлимит 1 месяц до 17-00"]
+    assert "Акция 3 посещения" not in row and "Безлимит 1 месяц до 17-00" not in row
+    assert ws.cell(row["Разовые посещения зал"], 4).value == 5
+    assert res.added == ["Козинак МИНИ"]  # незнакомое название — новая строка
 
 
 def test_aliases_from_settings(tmp_path):

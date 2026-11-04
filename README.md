@@ -68,13 +68,17 @@ The newest report serves as the template for the next day.
 ### Item names
 
 Some items are named differently in UCS and in the report. The program has a built-in list
-(«Вода 1 л» → «Вода 1», «RedBull 0.25» → «Ред Булл», «Протеин 30гр» → «Протеин порц» and others, see `config/settings.ini`).
+(«Вода 1 л» → «Вода 1», «RedBull 0.25» → «Ред Булл», «Протеин 30гр» → «Протеин в пачках штучно» and others, see `config/settings.ini`).
 To add or change a pair, put a `[aliases]` section into `settings.ini` next to the exe:
 ```
 [aliases]
 Название в UCS = Строка отчёта
 ```
 Several UCS names can point to one row; their sales are added up.
+
+Subscriptions and visits from UCS («Акция 3 посещения», «Безлимит 1 месяц»…) are not counted in the report.
+The list is `ignored` in the `[report]` section of `settings.ini` (comma-separated, `*` matches any text).
+«Разовые посещения зал» is a report row and is still filled.
 
 Which rows count as sections and which as staff rows is set in `settings.ini` next to the exe (sample: `config/settings.ini`).
 

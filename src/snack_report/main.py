@@ -15,6 +15,7 @@ from pathlib import Path
 
 from .report_builder import (
     DEFAULT_ALIASES,
+    DEFAULT_IGNORED,
     DEFAULT_SECTION_ROWS,
     DEFAULT_STAFF_ROWS,
     BuildResult,
@@ -65,6 +66,7 @@ def load_settings(base: Path) -> dict:
         "section_rows": rows("section_rows", DEFAULT_SECTION_ROWS),
         "staff_rows": rows("staff_rows", DEFAULT_STAFF_ROWS),
         "aliases": aliases,
+        "ignored": rows("ignored", DEFAULT_IGNORED),
     }
 
 
@@ -159,6 +161,7 @@ def _build(job: Job, s: dict, folder: Path, out: Path, prev: Path | None = None)
         section_rows=s["section_rows"],
         staff_rows=s["staff_rows"],
         aliases=s["aliases"],
+        ignored=s["ignored"],
     )
     log.info("Сохранено %s; заполнено %d; новых строк %d", out, len(res.filled), len(res.added))
     return res
@@ -176,6 +179,8 @@ def _describe(res: BuildResult, ucs_name: str) -> list[str]:
     else:
         lines.append("  Кассовый отчёт: впишите «Остаток наличных на начала дня» вручную.")
     lines.append(f"  Продано: {', '.join(f'{n} {fmt(q)}' for n, q in res.filled) or 'нет продаж'}")
+    if res.ignored:
+        lines.append(f"  Не учитываются (абонементы): {', '.join(res.ignored)}")
     if res.added:
         lines.append(f"  Новые товары (впишите им «ОстУтро»): {', '.join(res.added)}")
     if res.negative and not res.from_template:

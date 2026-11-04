@@ -4,6 +4,7 @@ from __future__ import annotations
 import datetime as dt
 import re
 import unicodedata
+from fnmatch import fnmatchcase
 from copy import copy
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -39,7 +40,7 @@ DEFAULT_STAFF_ROWS = ("Утеря карт", "Наличие карт", "Адм�
 
 # Название в UCS -> строка отчёта, когда они пишутся по-разному. Дополняется секцией [aliases] в settings.ini.
 DEFAULT_ALIASES = {
-    "Протеин 30гр": "Протеин порц",
+    "Протеин 30гр": "Протеин в пачках штучно",
     "протеиновый коктейль (на молоке)": "Протеин порц",
     "протеиновый коктейль на воде": "Протеин порц",
     "конфета 20 грамм": "Конфеты штучно",
@@ -49,6 +50,8 @@ DEFAULT_ALIASES = {
     "Вода 1,5 л": "Вода 1,5",
     "энергетик вейк апп": "энергетик вейкапп",
 }
+# Услуги UCS, которые не попадают в отчёт (абонементы и посещения). * — любые символы.
+DEFAULT_IGNORED = ("Акция * посещени*", "Безлимит*")
 DATE_FORMAT = r"dd\.mm\.yyyy"  # как в эталонном отчёте
 
 
@@ -60,6 +63,11 @@ def normalize(name: str) -> str:
     """Для сравнения названий: без учёта регистра, ё/е, запятой/точки и лишних пробелов."""
     s = str(name).lower().replace("ё", "е").replace(",", ".")
     return re.sub(r"\s+", " ", s).strip()
+
+
+def is_ignored(name: str, patterns) -> bool:
+    key = normalize(name)
+    return any(fnmatchcase(key, normalize(p)) for p in patterns)
 
 
 def report_filename(date: dt.date) -> str:
@@ -205,6 +213,7 @@ class BuildResult:
     filled: list[tuple[str, float]] = field(default_factory=list)
     added: list[str] = field(default_factory=list)          # новые строки (названия из UCS как есть)
     negative: list[tuple[str, float]] = field(default_factory=list)
+    ignored: list[str] = field(default_factory=list)        # услуги UCS, не попавшие в отчёт
     cash_opening: float | None = None   # остаток наличных на начало дня; None — вносят вручную
 
 
@@ -218,6 +227,7 @@ def build_report(
     section_rows: tuple[str, ...] = DEFAULT_SECTION_ROWS,
     staff_rows: tuple[str, ...] = DEFAULT_STAFF_ROWS,
     aliases: dict[str, str] = DEFAULT_ALIASES,
+    ignored: tuple[str, ...] = DEFAULT_IGNORED,
 ) -> BuildResult:
     """
     source — вчерашний отчёт (ОстУтро = вчерашний ОстВечер)
@@ -245,13 +255,18 @@ def build_report(
     sold: dict[str, float] = {}
     new_names: dict[str, str] = {}
     alias = {normalize(k): v for k, v in aliases.items()}
+    skipped: list[str] = []
     for name, qty in sales.items():
+        if is_ignored(name, ignored):
+            skipped.append(name)
+            continue
         name = alias.get(normalize(name), name)
         key = normalize(name)
         sold[key] = sold.get(key, 0) + qty
         if key not in lay.item_rows and key not in new_names:
             new_names[key] = name
-    result = BuildResult(output=output, source=source, from_template=from_template, added=list(new_names.values()))
+    result = BuildResult(output=output, source=source, from_template=from_template, added=list(new_names.values()),
+                         ignored=skipped)
     if new_names:
         _insert_items(ws, lay, list(new_names.values()))
         lay = detect_layout(ws, section_rows, staff_rows)
