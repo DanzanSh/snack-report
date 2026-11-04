@@ -3,11 +3,15 @@
 Запуск: python tools/make_template.py
 После этого откройте template.xlsx и один раз впишите «ОстУтро» на текущий день.
 """
+import sys
 from pathlib import Path
 
 from openpyxl import Workbook
 from openpyxl.formatting.rule import CellIsRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from snack_report.cash_report import SNACK_SHEET, ensure_sheets  # noqa: E402
 
 ITEMS = [
     "Батончик 1000", "Батончик 1200", "Батончик 800", "Батончик 700", "Батончик 1500",
@@ -31,7 +35,7 @@ WIDTHS = [32, 9, 10, 10, 8, 14, 10, 18, 10]
 def main() -> None:
     wb = Workbook()
     ws = wb.active
-    ws.title = "Отчёт"
+    ws.title = SNACK_SHEET
     thin = Side(style="thin", color="808080")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
     beige = PatternFill("solid", fgColor="F2DCCB")
@@ -73,6 +77,8 @@ def main() -> None:
     ws.page_setup.fitToWidth = 1
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     ws.page_setup.fitToHeight = 1
+
+    ensure_sheets(wb)  # первым добавляется кассовый лист
 
     out = Path(__file__).resolve().parents[1] / "config" / "template.xlsx"
     wb.save(out)

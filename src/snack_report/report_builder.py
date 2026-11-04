@@ -15,6 +15,8 @@ from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
+from .cash_report import closing_cash, ensure_sheets, fill_cash, get_cash_sheet, get_snack_sheet
+
 REPORT_PREFIX = "Отчёт_"
 REPORT_NAME_RE = re.compile(r"^Отчёт_(\d{2}\.\d{2}\.\d{4})\.xlsx$")
 
@@ -131,7 +133,8 @@ def evening_value(ws: Worksheet, ws_values: Worksheet, cols: dict[str, int], r: 
     if isinstance(cached, (int, float)) and not isinstance(cached, bool):
         return float(cached)
     g = lambda col: _num(ws.cell(r, cols[col]).value)  # noqa: E731
-    return g(COL_MORNING) + g(COL_INCOME) - g(COL_SOLD) - g(COL_WRITEOFF)
+    debt = g(COL_DEBT) if COL_DEBT in cols else 0.0
+    return g(COL_MORNING) + g(COL_INCOME) - g(COL_SOLD) - debt - g(COL_WRITEOFF)
 
 
 def _insert_items(ws: Worksheet, lay: Layout, names: list[str]) -> None:
@@ -170,6 +173,7 @@ class BuildResult:
     filled: list[tuple[str, float]] = field(default_factory=list)
     added: list[str] = field(default_factory=list)          # новые строки (названия из UCS как есть)
     negative: list[tuple[str, float]] = field(default_factory=list)
+    cash_opening: float | None = None   # остаток наличных на начало дня; None — вносят вручную
 
 
 def build_report(
@@ -190,8 +194,9 @@ def build_report(
     """
     wb = openpyxl.load_workbook(source)
     wb_values = openpyxl.load_workbook(source, data_only=True)  # значения формул, если файл сохранялся в Excel
-    ws = wb.worksheets[0]
-    ws_values = wb_values.worksheets[0]
+    ws = get_snack_sheet(wb)
+    ws_values = get_snack_sheet(wb_values)
+    prev_cash, prev_cash_values = get_cash_sheet(wb), get_cash_sheet(wb_values)
     lay = detect_layout(ws, section_rows, staff_rows)
     c = lay.cols
 
@@ -201,7 +206,7 @@ def build_report(
         if from_template:
             morning[key] = _num(ws.cell(r, c[COL_MORNING]).value)
         else:
-            morning[key] = evening_value(ws, ws_values, c, r)
+            morning[key] = max(evening_value(ws, ws_values, c, r), 0.0)  # минус вчера — сегодня с нуля
 
     # 2. Продажи: суммируем по нормализованному названию, новые товары добавляем строками
     sold: dict[str, float] = {}
@@ -234,7 +239,9 @@ def build_report(
             ws.cell(r, c[COL_SOLD]).value = _clean(s)
             result.filled.append((lay.item_names[key], s))
         ws.cell(r, c[COL_EVENING]).value = (
-            f"={L(COL_MORNING)}{r}+{L(COL_INCOME)}{r}-{L(COL_SOLD)}{r}-{L(COL_WRITEOFF)}{r}"
+            f"={L(COL_MORNING)}{r}+{L(COL_INCOME)}{r}-{L(COL_SOLD)}{r}"
+            + (f"-{L(COL_DEBT)}{r}" if COL_DEBT in c else "")
+            + f"-{L(COL_WRITEOFF)}{r}"
         )
         if m - (s or 0) < 0:
             result.negative.append((lay.item_names[key], m - (s or 0)))
@@ -245,6 +252,14 @@ def build_report(
             cell = ws.cell(r, col)
             if not isinstance(cell, MergedCell):
                 cell.value = None
+
+    # 5. Кассовый лист: остаток наличных на начало дня — из вчерашнего отчёта
+    opening = None
+    if not from_template and prev_cash is not None:
+        opening = closing_cash(prev_cash, prev_cash_values)
+    cash_ws, _ = ensure_sheets(wb)
+    fill_cash(cash_ws, date, opening)
+    result.cash_opening = opening
 
     _reset_negative_highlight(ws, lay)
     output.parent.mkdir(parents=True, exist_ok=True)

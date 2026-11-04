@@ -2,10 +2,16 @@
 
 Converts the UCS Shelter export «Сводка по доходу» (`.xls`) into the «Ежедневный отчет о наличии снеков и напитков» daily report (`.xlsx`).
 
-What the script does:
-- **ОстУтро**: today's opening stock (ОстУтро) is copied from yesterday's report (its ОстВечер column).
+Each daily report has two sheets:
+1. **Ежедневный кассовый отчет**: date, «Дорожные» = 1000 (always), «Остаток наличных на начала дня» (`наличные`) is taken from the previous report's «Остаток наличных на конец дня». The rest (other expenses and their notes, cash, non-cash, приход, предоплаты, инкасация, администратор, тех персонал, охрана) is cleared every day and filled in by hand.
+2. **Наличие снеков и напитков**: the stock report (Excel limits sheet names to 31 characters, so the full title «Ежедневный отчет о наличии снеков и напитков» is the heading inside the sheet).
+
+If a previous report has no cash sheet (older format), one is added and the opening cash is entered by hand.
+
+What the script does for the stock sheet:
+- **ОстУтро**: today's opening stock (ОстУтро) is copied from yesterday's report (its ОстВечер column). If yesterday's ОстВечер is negative, ОстУтро starts at 0.
 - **Продано**: the sold count comes from the «Услуги» block of the UCS export. Payments are ignored.
-- **ОстВечер**: a formula, `ОстУтро + Приход − Продано − Списание`. It recalculates when you enter Приход or Списание by hand. Negative values are highlighted in red.
+- **ОстВечер**: a formula, `ОстУтро + Приход − Продано − Долг − Списание`. It recalculates when you enter Приход, Долг or Списание by hand. Negative values are highlighted in red.
 - **Приход, Долг, Имя, Списание, Причина**: cleared every day and filled in by hand.
 - **Staff rows** (Утеря карт, Наличие карт, Администратор, Тех персонал, Охрана): cleared every day.
 
@@ -39,8 +45,7 @@ On every launch the program also updates `report\Месяц_ММ.ГГГГ.xlsx`.
 - Приход, Продано, Долг, Списание: totals for the month. An ИТОГО row sits at the bottom.
 - A monthly report is rebuilt when any daily report of that month is newer than it,
   e.g. after you entered Приход and saved the daily file.
-- Days without a report are listed in the header and in the summary window.
-  Days before the very first report, and after the latest one in the current month, don't count as missing.
+- Days without a report (weekends, holidays) are not an error and are not flagged. The next day's ОстУтро is taken from the latest earlier report.
 
 You can also drag a single `.xls` onto the exe: the report goes into `report` (it asks before overwriting).
 Errors are written to `snack-report.log` next to the exe.

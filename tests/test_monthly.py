@@ -7,6 +7,7 @@ import openpyxl
 import pytest
 
 import snack_report.main as main_mod
+from snack_report.cash_report import get_snack_sheet
 from snack_report.main import run
 
 FIXTURE = Path(__file__).parent / "fixtures" / "test.xls"
@@ -41,7 +42,7 @@ def _add(folder, *names):
 
 
 def _month(path):
-    ws = openpyxl.load_workbook(path).worksheets[0]
+    ws = get_snack_sheet(openpyxl.load_workbook(path))
     hdr = next(r for r in range(1, 10) if ws.cell(r, 1).value == "Товар")
     rows = {ws.cell(r, 1).value: [ws.cell(r, c).value for c in range(2, 8)] for r in range(hdr + 1, ws.max_row + 1)}
     return ws, rows
@@ -49,14 +50,14 @@ def _month(path):
 
 def _set_morning(path, name, value):
     wb = openpyxl.load_workbook(path)
-    ws = wb.worksheets[0]
+    ws = get_snack_sheet(wb)
     for r in range(3, ws.max_row + 1):
         if ws.cell(r, 1).value == name:
             ws.cell(r, 3).value = value
     wb.save(path)
 
 
-def test_monthly_totals_gaps_and_month_split(folder):
+def test_monthly_totals_and_month_split(folder):
     _add(folder, "a.xls")
     assert run(["--console", "--out", str(folder)]) == 0
     # в первом отчёте администратор вписывает остатки на утро
@@ -72,11 +73,10 @@ def test_monthly_totals_gaps_and_month_split(folder):
     assert oct_["Козинак МИНИ"] == [10, 0, 2, 0, 0, 8]
     assert oct_["Банан"] == [0, 0, 0, 0, 0, 0]
     assert oct_["ИТОГО"][2].startswith("=SUM(")
-    assert "31.10" in ws["A3"].value and "28.10" not in ws["A3"].value  # до первого отчёта — не пропуск
+    assert "Нет отчётов" not in str(ws["A3"].value)  # выходные и праздники — не пропуск
 
     ws, nov = _month(folder / "Месяц_11.2026.xlsx")
     assert nov["Вода 0,5"] == [94, 0, 6, 0, 0, 88]  # начало ноября = конец октября
-    assert ws["A3"].value == "Нет отчётов за: 02.11"  # после последнего отчёта — не пропуск
 
 
 def test_monthly_rebuilt_only_when_daily_changes(folder):
@@ -91,7 +91,7 @@ def test_monthly_rebuilt_only_when_daily_changes(folder):
     # администратор вносит приход в дневной отчёт
     day = folder / "Отчёт_30.10.2026.xlsx"
     wb = openpyxl.load_workbook(day)
-    ws = wb.worksheets[0]
+    ws = get_snack_sheet(wb)
     for r in range(3, ws.max_row + 1):
         if ws.cell(r, 1).value == "Вода 0,5":
             ws.cell(r, 2).value = 24
@@ -103,4 +103,4 @@ def test_monthly_rebuilt_only_when_daily_changes(folder):
 
     assert run(["--console", "--out", str(folder)]) == 0
     _, rows = _month(month)
-    assert rows["Вода 0,5"] == [0, 24, 6, 1, 2, 16]
+    assert rows["Вода 0,5"] == [0, 24, 6, 1, 2, 18]  # 29.10 ушёл в -3, 30.10 начался с 0; Долг вычитается

@@ -7,6 +7,7 @@ import pytest
 
 from conftest import ROOT
 import snack_report.main as main_mod
+from snack_report.cash_report import get_snack_sheet
 from snack_report.main import run
 from snack_report.report_builder import find_previous_report, normalize
 
@@ -15,7 +16,7 @@ FIXTURE = Path(__file__).parent / "fixtures" / "test.xls"
 
 
 def _rows(path):
-    ws = openpyxl.load_workbook(path).worksheets[0]
+    ws = get_snack_sheet(openpyxl.load_workbook(path))
     return ws, {ws.cell(r, 1).value: r for r in range(3, ws.max_row + 1)}
 
 
@@ -25,7 +26,7 @@ def template(tmp_path):
     t = tmp_path / "template.xlsx"
     shutil.copy(ROOT / "config" / "template.xlsx", t)
     wb = openpyxl.load_workbook(t)
-    ws = wb.worksheets[0]
+    ws = get_snack_sheet(wb)
     stock = {"Вода 0,5": 253, "Банан": 1}
     for r in range(3, ws.max_row + 1):
         name = ws.cell(r, 1).value
@@ -52,7 +53,7 @@ def test_first_run_and_next_day(tmp_path, template):
     # «Вода 0.5» совпала с «Вода 0,5» по названию
     r = row["Вода 0,5"]
     assert ws.cell(r, 3).value == 253 and ws.cell(r, 4).value == 3
-    assert ws.cell(r, 9).value == f"=C{r}+B{r}-D{r}-G{r}"
+    assert ws.cell(r, 9).value == f"=C{r}+B{r}-D{r}-E{r}-G{r}"
     assert ws.cell(row["Банан"], 4).value is None
 
     # Остальные названия UCS добавлены как есть, перед «Прочее», а «Козинаки» не тронуты
@@ -61,11 +62,11 @@ def test_first_run_and_next_day(tmp_path, template):
     assert row[new[0]] == row["Зефир 1000"] + 1
     for n in new:
         assert ws.cell(row[n], 4).value == 1
-        assert ws.cell(row[n], 9).value == f"=C{row[n]}+B{row[n]}-D{row[n]}-G{row[n]}"
+        assert ws.cell(row[n], 9).value == f"=C{row[n]}+B{row[n]}-D{row[n]}-E{row[n]}-G{row[n]}"
     assert ws.cell(row["Козинаки"], 4).value is None
     # формулы ниже вставки указывают на свои строки
     rp = row["Рис курица"]
-    assert ws.cell(rp, 9).value == f"=C{rp}+B{rp}-D{rp}-G{rp}"
+    assert ws.cell(rp, 9).value == f"=C{rp}+B{rp}-D{rp}-E{rp}-G{rp}"
 
     # Имена персонала очищены
     assert ws.cell(row["Администратор"], 8).value is None
@@ -138,7 +139,7 @@ def test_folder_mode_processes_new_exports_in_date_order(tmp_path):
         assert (folder / "Отчёт_28.10.2026.xlsx").exists()
         assert (folder / "Отчёт_29.10.2026.xlsx").exists()
         ws, row = _rows(folder / "Отчёт_29.10.2026.xlsx")
-        assert ws.cell(row["Вода 0,5"], 3).value == -3  # остаток перенесён из 28.10 (шаблон пустой)
+        assert ws.cell(row["Вода 0,5"], 3).value == 0  # 28.10 закончился на -3, 29.10 начинается с 0
 
         # повторный запуск ничего не пересоздаёт
         mtime = (folder / "Отчёт_29.10.2026.xlsx").stat().st_mtime_ns
@@ -152,3 +153,59 @@ def test_folder_mode_creates_missing_folder(tmp_path):
     folder = tmp_path / "report"
     assert run(["--console", "--out", str(folder)]) == 2
     assert folder.is_dir()
+
+
+def test_negative_evening_gives_zero_morning(tmp_path, template):
+    out = tmp_path / "reports"
+    # Банан: ОстУтро 1, продаж нет; Вода 0,5: 253 − 3
+    assert run([str(FIXTURE), "--console", "--out", str(out), "--prev", str(template)]) == 0
+    day1 = out / "Отчёт_28.10.2026.xlsx"
+    ws, row = _rows(day1)
+    ws.cell(row["Банан"], 7).value = 5            # списание больше остатка → ОстВечер = -4
+    ws.cell(row["Вода 0,5"], 7).value = 2         # обычный случай: 253 - 3 - 2 = 248
+    ws.parent.save(day1)
+
+    orig = main_mod.read_ucs
+
+    def read_next_day(p):
+        rep = orig(p)
+        rep.date = dt.date(2026, 10, 29)
+        return rep
+
+    main_mod.read_ucs = read_next_day
+    try:
+        assert run([str(FIXTURE), "--console", "--out", str(out)]) == 0
+    finally:
+        main_mod.read_ucs = orig
+
+    ws2, row2 = _rows(out / "Отчёт_29.10.2026.xlsx")
+    assert ws2.cell(row2["Банан"], 3).value == 0
+    assert ws2.cell(row2["Вода 0,5"], 3).value == 248
+
+
+def test_new_item_row_with_only_name_gives_zero_morning(tmp_path, template):
+    out = tmp_path / "reports"
+    assert run([str(FIXTURE), "--console", "--out", str(out), "--prev", str(template)]) == 0
+    day1 = out / "Отчёт_28.10.2026.xlsx"
+    ws, row = _rows(day1)
+    # позицию добавили вручную: заполнено только наименование
+    at = row["Прочее"]
+    ws.insert_rows(at)
+    ws.cell(at, 1).value = "Новинка"
+    ws.parent.save(day1)
+
+    orig = main_mod.read_ucs
+
+    def read_next_day(p):
+        rep = orig(p)
+        rep.date = dt.date(2026, 10, 29)
+        return rep
+
+    main_mod.read_ucs = read_next_day
+    try:
+        assert run([str(FIXTURE), "--console", "--out", str(out)]) == 0
+    finally:
+        main_mod.read_ucs = orig
+
+    ws2, row2 = _rows(out / "Отчёт_29.10.2026.xlsx")
+    assert ws2.cell(row2["Новинка"], 3).value == 0

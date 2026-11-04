@@ -117,16 +117,14 @@ def run(argv: list[str] | None = None) -> int:
         return 1
 
 
-def _monthly(s: dict, folder: Path) -> tuple[list[str], bool]:
-    """Пересобирает месячные отчёты. Возвращает строки для итогового окна и признак пропусков."""
+def _monthly(s: dict, folder: Path) -> list[str]:
+    """Пересобирает месячные отчёты. Возвращает строки для итогового окна."""
     results: list[MonthResult] = update_monthly(folder, s["section_rows"], s["staff_rows"])
     lines = []
     for m in results:
-        log.info("Месячный отчёт %s: дней %d, пропущено %d", m.output.name, m.days, len(m.missing))
+        log.info("Месячный отчёт %s: дней %d", m.output.name, m.days)
         lines.append(f"{m.output.name}: дневных отчётов {m.days}")
-        if m.missing:
-            lines.append("  Нет отчётов за: " + ", ".join(f"{d:%d.%m}" for d in m.missing))
-    return lines, any(m.missing for m in results)
+    return lines
 
 
 @dataclass
@@ -165,6 +163,10 @@ def _describe(res: BuildResult, ucs_name: str) -> list[str]:
         lines.append("  Первый отчёт: впишите в нём «ОстУтро» вручную, «ОстВечер» пересчитается сам.")
     else:
         lines.append(f"  Остатки на утро из: {res.source.name}")
+    if res.cash_opening is not None:
+        lines.append(f"  Остаток наличных на начало дня: {fmt(res.cash_opening)}")
+    else:
+        lines.append("  Кассовый отчёт: впишите «Остаток наличных на начала дня» вручную.")
     lines.append(f"  Продано: {', '.join(f'{n} {fmt(q)}' for n, q in res.filled) or 'нет продаж'}")
     if res.added:
         lines.append(f"  Новые товары (впишите им «ОстУтро»): {', '.join(res.added)}")
@@ -204,7 +206,7 @@ def _run_folder(s: dict, folder: Path, ui: Ui) -> int:
                if jobs else f"В папке {folder} нет выгрузок UCS (.xls).")
         if skipped:
             msg += "\n\nПропущены:\n" + "\n".join(f"  • {x}" for x in skipped)
-        month_lines, _ = _monthly(s, folder)
+        month_lines = _monthly(s, folder)
         if month_lines:
             msg += "\n\nОбновлены месячные отчёты:\n" + "\n".join(month_lines)
         ui.warn(msg)
@@ -220,10 +222,9 @@ def _run_folder(s: dict, folder: Path, ui: Ui) -> int:
         lines.append("Пропущены:")
         lines += [f"  • {x}" for x in skipped]
         lines.append("")
-    month_lines, month_gaps = _monthly(s, folder)
+    month_lines = _monthly(s, folder)
     if month_lines:
         lines += ["Месячные отчёты:"] + month_lines
-    warn |= month_gaps
     (ui.warn if warn else ui.info)("\n".join(lines).rstrip())
     return 0
 
@@ -237,10 +238,10 @@ def _run_single(args, s: dict, folder: Path, ui: Ui) -> int:
             return 3
     res = _build(job, s, folder, args.prev)
     text = "Готово:\n" + "\n".join(_describe(res, job.ucs_path.name))
-    month_lines, month_gaps = _monthly(s, folder)
+    month_lines = _monthly(s, folder)
     if month_lines:
         text += "\n\nМесячные отчёты:\n" + "\n".join(month_lines)
-    (ui.warn if res.added or month_gaps else ui.info)(text)
+    (ui.warn if res.added else ui.info)(text)
     return 0
 
 
