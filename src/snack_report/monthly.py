@@ -1,4 +1,4 @@
-"""Ежемесячный отчёт: итоги по дневным отчётам Отчёт_ДД.ММ.ГГГГ.xlsx за месяц."""
+"""Ежемесячный отчёт: итоги по дневным отчётам за месяц."""
 from __future__ import annotations
 
 import datetime as dt
@@ -11,6 +11,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from .cash_report import get_snack_sheet
+from .layout import MONTHS, monthly_path
 from .report_builder import (
     COL_DEBT,
     COL_INCOME,
@@ -19,21 +20,15 @@ from .report_builder import (
     COL_WRITEOFF,
     DEFAULT_SECTION_ROWS,
     DEFAULT_STAFF_ROWS,
-    REPORT_NAME_RE,
     _clean,
     _num,
     detect_layout,
     evening_value,
+    find_reports,
 )
 
-MONTHS = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль",
-          "август", "сентябрь", "октябрь", "ноябрь", "декабрь"]
 HEADERS = ["Товар", "ОстНачало", "Приход", "Продано", "Долг", "Списание", "ОстКонец"]
 SUM_FIELDS = ("income", "sold", "debt", "writeoff")
-
-
-def monthly_filename(year: int, month: int) -> str:
-    return f"Месяц_{month:02d}.{year}.xlsx"
 
 
 @dataclass
@@ -79,12 +74,7 @@ class MonthResult:
 
 
 def daily_reports(folder: Path) -> dict[dt.date, Path]:
-    found = {}
-    for p in folder.iterdir() if folder.is_dir() else []:
-        m = REPORT_NAME_RE.match(p.name)
-        if m:
-            found[dt.datetime.strptime(m.group(1), "%d.%m.%Y").date()] = p
-    return found
+    return find_reports(folder)
 
 
 def build_month(
@@ -189,7 +179,7 @@ def update_monthly(folder: Path, section_rows=DEFAULT_SECTION_ROWS, staff_rows=D
 
     results = []
     for (y, m), month_reports in sorted(by_month.items()):
-        out = folder / monthly_filename(y, m)
+        out = monthly_path(folder, y, m)
         newest_daily = max(p.stat().st_mtime for p in month_reports.values())
         if out.exists() and out.stat().st_mtime >= newest_daily:
             continue

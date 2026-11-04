@@ -18,7 +18,8 @@ from openpyxl.worksheet.worksheet import Worksheet
 from .cash_report import closing_cash, ensure_sheets, fill_cash, get_cash_sheet, get_snack_sheet
 
 REPORT_PREFIX = "Отчёт_"
-REPORT_NAME_RE = re.compile(r"^Отчёт_(\d{2}\.\d{2}\.\d{4})\.xlsx$")
+# Отчёт_ГГГГ-ММ-ДД.xlsx; старый формат Отчёт_ДД.ММ.ГГГГ.xlsx тоже читается
+REPORT_NAME_RE = re.compile(r"^Отчёт_(\d{4}-\d{2}-\d{2}|\d{2}\.\d{2}\.\d{4})\.xlsx$")
 
 # Названия колонок в строке заголовка отчёта
 COL_INCOME = "Приход"
@@ -47,22 +48,38 @@ def normalize(name: str) -> str:
 
 
 def report_filename(date: dt.date) -> str:
-    return f"{REPORT_PREFIX}{date:%d.%m.%Y}.xlsx"
+    return f"{REPORT_PREFIX}{date:%Y-%m-%d}.xlsx"
+
+
+def report_date(name: str) -> dt.date | None:
+    """Дата из имени дневного отчёта (оба формата) или None."""
+    m = REPORT_NAME_RE.match(name)
+    if not m:
+        return None
+    fmt = "%Y-%m-%d" if "-" in m.group(1) else "%d.%m.%Y"
+    return dt.datetime.strptime(m.group(1), fmt).date()
+
+
+def find_reports(reports_dir: Path) -> dict[dt.date, Path]:
+    """Все дневные отчёты в папке и её подпапках. Если за дату их два — берётся тот, что в папке месяца."""
+    found: dict[dt.date, Path] = {}
+    if not reports_dir.is_dir():
+        return found
+    for p in reports_dir.rglob(f"{REPORT_PREFIX}*.xlsx"):
+        d = report_date(p.name)
+        if d is None or not p.is_file():
+            continue
+        other = found.get(d)
+        if other is None or (len(p.parts), "-" in p.name) > (len(other.parts), "-" in other.name):
+            found[d] = p
+    return found
 
 
 def find_previous_report(reports_dir: Path, before: dt.date) -> Path | None:
-    """Самый свежий Отчёт_ДД.ММ.ГГГГ.xlsx с датой раньше `before`."""
-    best: tuple[dt.date, Path] | None = None
-    if not reports_dir.is_dir():
-        return None
-    for p in reports_dir.iterdir():
-        m = REPORT_NAME_RE.match(p.name)
-        if not m:
-            continue
-        d = dt.datetime.strptime(m.group(1), "%d.%m.%Y").date()
-        if d < before and (best is None or d > best[0]):
-            best = (d, p)
-    return best[1] if best else None
+    """Самый свежий дневной отчёт с датой раньше `before`."""
+    reports = find_reports(reports_dir)
+    earlier = [d for d in reports if d < before]
+    return reports[max(earlier)] if earlier else None
 
 
 @dataclass

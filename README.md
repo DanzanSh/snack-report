@@ -20,23 +20,31 @@ What the script does for the stock sheet:
 ```
 any folder\
   SnackReport.exe
-  report\                     <- UCS exports and reports go here
-    Сводка_28.10.xls
-    Отчёт_28.10.2026.xlsx     <- daily report, created by the program
-    Месяц_10.2026.xlsx        <- monthly report, updated on every launch
+  report\                         <- put new UCS exports here
+    Сводка_04.11.xls              <- not processed yet
+    2026-10 Октябрь\              <- one folder per month, created by the program
+      Отчёт_2026-10-28.xlsx       <- daily report
+      Месяц_10.2026.xlsx          <- monthly report, updated on every launch
+      UCS\
+        Сводка_28.10.xls          <- processed exports are moved here
+    2026-11 Ноябрь\
 ```
 
 1. Put `SnackReport.exe` in any folder. On first launch it creates a `report` folder next to itself.
 2. Every day, save the UCS export (`.xls`, any file name) into `report` and double-click `SnackReport.exe`.
-3. For every export whose date has no report yet, the program creates `Отчёт_ДД.ММ.ГГГГ.xlsx`
-   in the same folder, in date order. ОстУтро is taken from the previous report.
-   Exports that already have a report are left alone.
-4. **First report:** the template is built into the exe. In the first report, enter ОстУтро by hand;
+3. For every export whose date has no report yet, the program creates `Отчёт_ГГГГ-ММ-ДД.xlsx`
+   in that month's folder, in date order. ОстУтро is taken from the previous report, even if it is in last month's folder.
+   Exports that already have a report are not rebuilt.
+4. After that, every export with a report is moved to `<month>\UCS`. If the same name is already there,
+   ` (2)` is added. Files the program cannot read stay in `report`, so whatever is left there needs attention.
+   Reports from older versions (`Отчёт_ДД.ММ.ГГГГ.xlsx` directly in `report`) are moved into month folders
+   automatically on the next launch. The old file name format is still read.
+5. **First report:** the template is built into the exe. In the first report, enter ОстУтро by hand;
    ОстВечер recalculates on its own, and the next day takes its stock from there.
 
 ## Monthly report
 
-On every launch the program also updates `report\Месяц_ММ.ГГГГ.xlsx`. It is built from that month's daily reports, so it includes Приход, Долг and Списание entered by hand:
+On every launch the program also updates `Месяц_ММ.ГГГГ.xlsx` in each month's folder. It is built from that month's daily reports, so it includes Приход, Долг and Списание entered by hand:
 
 | Товар | ОстНачало | Приход | Продано | Долг | Списание | ОстКонец |
 |---|---|---|---|---|---|---|
@@ -47,13 +55,13 @@ On every launch the program also updates `report\Месяц_ММ.ГГГГ.xlsx`.
   e.g. after you entered Приход and saved the daily file.
 - Days without a report (weekends, holidays) are not an error and are not flagged. The next day's ОстУтро is taken from the latest earlier report.
 
-You can also drag a single `.xls` onto the exe: the report goes into `report` (it asks before overwriting).
+You can also drag a single `.xls` onto the exe: the report goes into its month folder in `report` (it asks before overwriting). The dragged file itself is not moved.
 Errors are written to `snack-report.log` next to the exe.
 
 ## Adding a new item
 
 Just sell it through UCS: the row appears in the report automatically.
-To add an item ahead of time, add a row to the latest report in `report`, named exactly as in UCS.
+To add an item ahead of time, add a row to the latest daily report in the current month's folder, named exactly as in UCS.
 The newest report serves as the template for the next day.
 
 Which rows count as sections and which as staff rows is set in `settings.ini` next to the exe (sample: `config/settings.ini`).

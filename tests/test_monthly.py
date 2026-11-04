@@ -8,6 +8,7 @@ import pytest
 
 import snack_report.main as main_mod
 from snack_report.cash_report import get_snack_sheet
+from snack_report.layout import report_path, monthly_path
 from snack_report.main import run
 
 FIXTURE = Path(__file__).parent / "fixtures" / "test.xls"
@@ -61,13 +62,13 @@ def test_monthly_totals_and_month_split(folder):
     _add(folder, "a.xls")
     assert run(["--console", "--out", str(folder)]) == 0
     # в первом отчёте администратор вписывает остатки на утро
-    _set_morning(folder / "Отчёт_29.10.2026.xlsx", "Вода 0,5", 100)
-    _set_morning(folder / "Отчёт_29.10.2026.xlsx", "Козинак МИНИ", 10)
+    _set_morning(report_path(folder, dt.date(2026, 10, 29)), "Вода 0,5", 100)
+    _set_morning(report_path(folder, dt.date(2026, 10, 29)), "Козинак МИНИ", 10)
 
     _add(folder, "b.xls", "c.xls", "d.xls")
     assert run(["--console", "--out", str(folder)]) == 0
 
-    ws, oct_ = _month(folder / "Месяц_10.2026.xlsx")
+    ws, oct_ = _month(monthly_path(folder, 2026, 10))
     # ОстНачало, Приход, Продано, Долг, Списание, ОстКонец
     assert oct_["Вода 0,5"] == [100, 0, 6, 0, 0, 94]
     assert oct_["Козинак МИНИ"] == [10, 0, 2, 0, 0, 8]
@@ -75,21 +76,21 @@ def test_monthly_totals_and_month_split(folder):
     assert oct_["ИТОГО"][2].startswith("=SUM(")
     assert "Нет отчётов" not in str(ws["A3"].value)  # выходные и праздники — не пропуск
 
-    ws, nov = _month(folder / "Месяц_11.2026.xlsx")
+    ws, nov = _month(monthly_path(folder, 2026, 11))
     assert nov["Вода 0,5"] == [94, 0, 6, 0, 0, 88]  # начало ноября = конец октября
 
 
 def test_monthly_rebuilt_only_when_daily_changes(folder):
     _add(folder, "a.xls", "b.xls")
     assert run(["--console", "--out", str(folder)]) == 0
-    month = folder / "Месяц_10.2026.xlsx"
+    month = monthly_path(folder, 2026, 10)
     old = month.stat().st_mtime_ns
 
     assert run(["--console", "--out", str(folder)]) == 0
     assert month.stat().st_mtime_ns == old  # ничего не менялось — не пересобираем
 
     # администратор вносит приход в дневной отчёт
-    day = folder / "Отчёт_30.10.2026.xlsx"
+    day = report_path(folder, dt.date(2026, 10, 30))
     wb = openpyxl.load_workbook(day)
     ws = get_snack_sheet(wb)
     for r in range(3, ws.max_row + 1):

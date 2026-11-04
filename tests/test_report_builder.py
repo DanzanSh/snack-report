@@ -8,6 +8,7 @@ import pytest
 from conftest import ROOT
 import snack_report.main as main_mod
 from snack_report.cash_report import get_snack_sheet
+from snack_report.layout import report_path
 from snack_report.main import run
 from snack_report.report_builder import find_previous_report, normalize
 
@@ -46,7 +47,7 @@ def test_normalize():
 def test_first_run_and_next_day(tmp_path, template):
     out = tmp_path / "reports"
     assert run([str(FIXTURE), "--console", "--out", str(out), "--prev", str(template)]) == 0
-    day1 = out / "Отчёт_28.10.2026.xlsx"
+    day1 = report_path(out, dt.date(2026, 10, 28))
     ws, row = _rows(day1)
     assert ws["A1"].value.date() == dt.date(2026, 10, 28)
 
@@ -93,7 +94,7 @@ def test_first_run_and_next_day(tmp_path, template):
     finally:
         main_mod.read_ucs = orig
 
-    ws2, row2 = _rows(out / "Отчёт_29.10.2026.xlsx")
+    ws2, row2 = _rows(report_path(out, dt.date(2026, 10, 29)))
     r2 = row2["Вода 0,5"]
     assert ws2.cell(r2, 3).value == 253 + 10 - 3 - 2  # ОстУтро = вчерашний ОстВечер
     assert ws2.cell(r2, 2).value is None and ws2.cell(r2, 7).value is None
@@ -136,15 +137,15 @@ def test_folder_mode_processes_new_exports_in_date_order(tmp_path):
     main_mod.read_ucs = fake
     try:
         assert run(["--console", "--out", str(folder)]) == 0
-        assert (folder / "Отчёт_28.10.2026.xlsx").exists()
-        assert (folder / "Отчёт_29.10.2026.xlsx").exists()
-        ws, row = _rows(folder / "Отчёт_29.10.2026.xlsx")
+        assert (report_path(folder, dt.date(2026, 10, 28))).exists()
+        assert (report_path(folder, dt.date(2026, 10, 29))).exists()
+        ws, row = _rows(report_path(folder, dt.date(2026, 10, 29)))
         assert ws.cell(row["Вода 0,5"], 3).value == 0  # 28.10 закончился на -3, 29.10 начинается с 0
 
         # повторный запуск ничего не пересоздаёт
-        mtime = (folder / "Отчёт_29.10.2026.xlsx").stat().st_mtime_ns
+        mtime = (report_path(folder, dt.date(2026, 10, 29))).stat().st_mtime_ns
         assert run(["--console", "--out", str(folder)]) == 0
-        assert (folder / "Отчёт_29.10.2026.xlsx").stat().st_mtime_ns == mtime
+        assert (report_path(folder, dt.date(2026, 10, 29))).stat().st_mtime_ns == mtime
     finally:
         main_mod.read_ucs = orig
 
@@ -159,7 +160,7 @@ def test_negative_evening_gives_zero_morning(tmp_path, template):
     out = tmp_path / "reports"
     # Банан: ОстУтро 1, продаж нет; Вода 0,5: 253 − 3
     assert run([str(FIXTURE), "--console", "--out", str(out), "--prev", str(template)]) == 0
-    day1 = out / "Отчёт_28.10.2026.xlsx"
+    day1 = report_path(out, dt.date(2026, 10, 28))
     ws, row = _rows(day1)
     ws.cell(row["Банан"], 7).value = 5            # списание больше остатка → ОстВечер = -4
     ws.cell(row["Вода 0,5"], 7).value = 2         # обычный случай: 253 - 3 - 2 = 248
@@ -178,7 +179,7 @@ def test_negative_evening_gives_zero_morning(tmp_path, template):
     finally:
         main_mod.read_ucs = orig
 
-    ws2, row2 = _rows(out / "Отчёт_29.10.2026.xlsx")
+    ws2, row2 = _rows(report_path(out, dt.date(2026, 10, 29)))
     assert ws2.cell(row2["Банан"], 3).value == 0
     assert ws2.cell(row2["Вода 0,5"], 3).value == 248
 
@@ -186,7 +187,7 @@ def test_negative_evening_gives_zero_morning(tmp_path, template):
 def test_new_item_row_with_only_name_gives_zero_morning(tmp_path, template):
     out = tmp_path / "reports"
     assert run([str(FIXTURE), "--console", "--out", str(out), "--prev", str(template)]) == 0
-    day1 = out / "Отчёт_28.10.2026.xlsx"
+    day1 = report_path(out, dt.date(2026, 10, 28))
     ws, row = _rows(day1)
     # позицию добавили вручную: заполнено только наименование
     at = row["Прочее"]
@@ -207,5 +208,5 @@ def test_new_item_row_with_only_name_gives_zero_morning(tmp_path, template):
     finally:
         main_mod.read_ucs = orig
 
-    ws2, row2 = _rows(out / "Отчёт_29.10.2026.xlsx")
+    ws2, row2 = _rows(report_path(out, dt.date(2026, 10, 29)))
     assert ws2.cell(row2["Новинка"], 3).value == 0

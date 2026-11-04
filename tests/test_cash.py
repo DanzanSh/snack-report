@@ -6,6 +6,7 @@ import pytest
 
 import snack_report.main as main_mod
 from snack_report.cash_report import CASH_SHEET, SNACK_SHEET, get_snack_sheet
+from snack_report.layout import report_path
 from snack_report.main import run
 
 from conftest import ROOT
@@ -33,7 +34,7 @@ def day(monkeypatch):
 def _first_day(day, out):
     template = ROOT / "config" / "template.xlsx"   # встроенный шаблон: первый отчёт
     assert day([str(FIXTURE), "--out", str(out), "--prev", str(template)], dt.date(2026, 10, 28)) == 0
-    return out / "Отчёт_28.10.2026.xlsx"
+    return report_path(out, dt.date(2026, 10, 28))
 
 
 def test_two_sheets_and_fixed_fields(tmp_path, day):
@@ -65,7 +66,7 @@ def test_next_day_carries_cash_and_resets_the_rest(tmp_path, day):
     wb.save(day1)
 
     assert day([str(FIXTURE), "--out", str(out)], dt.date(2026, 10, 29)) == 0
-    c2 = openpyxl.load_workbook(out / "Отчёт_29.10.2026.xlsx")[CASH_SHEET]
+    c2 = openpyxl.load_workbook(report_path(out, dt.date(2026, 10, 29)))[CASH_SHEET]
     assert c2["C5"].value == 10000 + 5000 + 300 - (1500 + 200)   # конец дня 28.10
     assert c2["B3"].value.date() == dt.date(2026, 10, 29)
     assert c2["C7"].value == 1000
@@ -84,7 +85,7 @@ def test_old_single_sheet_report_gets_cash_sheet(tmp_path, day):
     wb.save(day1)
 
     assert day([str(FIXTURE), "--out", str(out)], dt.date(2026, 10, 29)) == 0
-    wb2 = openpyxl.load_workbook(out / "Отчёт_29.10.2026.xlsx")
+    wb2 = openpyxl.load_workbook(report_path(out, dt.date(2026, 10, 29)))
     assert wb2.sheetnames == [CASH_SHEET, SNACK_SHEET]
     assert wb2[CASH_SHEET]["C7"].value == 1000 and wb2[CASH_SHEET]["C5"].value is None
     assert get_snack_sheet(wb2).title == SNACK_SHEET

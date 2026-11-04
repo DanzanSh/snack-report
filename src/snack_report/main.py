@@ -1,7 +1,8 @@
-"""SnackReport: выгрузки UCS «Сводка по доходу» → ежедневные отчёты о наличии снеков и напитков.
+r"""SnackReport: выгрузки UCS «Сводка по доходу» → ежедневные отчёты о наличии снеков и напитков.
 
 Запуск без аргументов: берёт все выгрузки UCS (.xls) из папки `report` рядом с exe
-и для каждой даты, по которой ещё нет отчёта, создаёт Отчёт_ДД.ММ.ГГГГ.xlsx в той же папке.
+и для каждой даты, по которой ещё нет отчёта, создаёт report\ГГГГ-ММ Месяц\Отчёт_ГГГГ-ММ-ДД.xlsx.
+Обработанные выгрузки переносятся в report\ГГГГ-ММ Месяц\UCS.
 """
 from __future__ import annotations
 
@@ -18,8 +19,9 @@ from .report_builder import (
     BuildResult,
     build_report,
     find_previous_report,
-    report_filename,
+    find_reports,
 )
+from .layout import move_into, organize, report_path, ucs_archive_dir
 from .monthly import MonthResult, update_monthly
 from .ucs_reader import UcsFormatError, UcsReport, read_ucs
 
@@ -133,7 +135,7 @@ class Job:
     ucs: UcsReport
 
 
-def _build(job: Job, s: dict, folder: Path, prev: Path | None = None) -> BuildResult:
+def _build(job: Job, s: dict, folder: Path, out: Path, prev: Path | None = None) -> BuildResult:
     if prev:
         source, from_template = prev, prev.resolve() == s["template"].resolve()
     else:
@@ -141,7 +143,6 @@ def _build(job: Job, s: dict, folder: Path, prev: Path | None = None) -> BuildRe
         source, from_template = (found, False) if found else (s["template"], True)
     if not source.exists():
         raise FileNotFoundError(f"Не найден файл {source}")
-    out = folder / report_filename(job.ucs.date)
     log.info("%s → %s (источник %s, шаблон: %s)", job.ucs_path.name, out.name, source.name, from_template)
     res = build_report(
         date=job.ucs.date,
@@ -175,14 +176,20 @@ def _describe(res: BuildResult, ucs_name: str) -> list[str]:
     return lines
 
 
+def _bullets(title: str, items: list[str]) -> list[str]:
+    return [title] + [f"  • {x}" for x in items] + [""] if items else []
+
+
 def _run_folder(s: dict, folder: Path, ui: Ui) -> int:
     if not folder.is_dir():
         folder.mkdir(parents=True)
         ui.warn(f"Создана папка {folder}.\nПоложите в неё выгрузку UCS (.xls) и запустите программу снова.")
         return 2
 
+    problems = organize(folder)  # отчёты из корня (старая раскладка) — по папкам месяцев
     jobs: dict = {}
     skipped: list[str] = []
+    older: list[Job] = []  # выгрузки, для даты которых есть файл новее
     for p in sorted(folder.iterdir()):
         if not p.is_file() or p.suffix.lower() != ".xls" or p.name.startswith("~$"):
             continue
@@ -192,51 +199,59 @@ def _run_folder(s: dict, folder: Path, ui: Ui) -> int:
             log.warning("Пропущен %s: %s", p.name, e)
             skipped.append(f"{p.name}: {e}")
             continue
-        other = jobs.get(ucs.date)
+        job, other = Job(p, ucs), jobs.get(ucs.date)
         if other is None or p.stat().st_mtime > other.ucs_path.stat().st_mtime:
             if other:
                 skipped.append(f"{other.ucs_path.name}: за {ucs.date:%d.%m.%Y} есть файл новее ({p.name})")
-            jobs[ucs.date] = Job(p, ucs)
+                older.append(other)
+            jobs[ucs.date] = job
         else:
             skipped.append(f"{p.name}: за {ucs.date:%d.%m.%Y} есть файл новее ({other.ucs_path.name})")
+            older.append(job)
 
-    todo = [jobs[d] for d in sorted(jobs) if not (folder / report_filename(d)).exists()]
-    if not todo:
-        msg = (f"Новых выгрузок нет: по всем .xls в папке {folder} отчёты уже созданы."
-               if jobs else f"В папке {folder} нет выгрузок UCS (.xls).")
-        if skipped:
-            msg += "\n\nПропущены:\n" + "\n".join(f"  • {x}" for x in skipped)
-        month_lines = _monthly(s, folder)
-        if month_lines:
-            msg += "\n\nОбновлены месячные отчёты:\n" + "\n".join(month_lines)
-        ui.warn(msg)
-        return 0 if jobs else 2
-
-    lines = [f"Создано отчётов: {len(todo)} (папка {folder})", ""]
-    warn = bool(skipped)
+    existing = find_reports(folder)
+    todo = [jobs[d] for d in sorted(jobs) if d not in existing]
+    lines: list[str] = []
+    warn = bool(skipped or problems)
+    if todo:
+        lines += [f"Создано отчётов: {len(todo)} (папка {folder})", ""]
+    elif jobs:
+        lines += [f"Новых выгрузок нет: по всем .xls в папке {folder} отчёты уже созданы.", ""]
+        warn = True
+    else:
+        lines += [f"Новых выгрузок нет. Положите выгрузку UCS (.xls) в папку {folder}.", ""]
+        warn = True
     for job in todo:  # по возрастанию даты: каждый следующий берёт остатки из предыдущего
-        res = _build(job, s, folder)
+        res = _build(job, s, folder, report_path(folder, job.ucs.date))
         lines += _describe(res, job.ucs_path.name) + [""]
         warn |= bool(res.added) or bool(res.negative and not res.from_template)
-    if skipped:
-        lines.append("Пропущены:")
-        lines += [f"  • {x}" for x in skipped]
-        lines.append("")
+
+    # отчёт по выгрузке есть — переносим её в архив месяца, в корне остаются только необработанные
+    for job in [*jobs.values(), *older]:
+        try:
+            dst = move_into(job.ucs_path, ucs_archive_dir(folder, job.ucs.date))
+            log.info("%s перенесён в %s", job.ucs_path.name, dst)
+        except OSError as e:
+            log.warning("Не удалось перенести %s: %s", job.ucs_path, e)
+            problems.append(f"{job.ucs_path.name}: не удалось перенести в архив ({e})")
+            warn = True
+
+    lines += _bullets("Пропущены:", skipped) + _bullets("Не перенесены:", problems)
     month_lines = _monthly(s, folder)
     if month_lines:
         lines += ["Месячные отчёты:"] + month_lines
     (ui.warn if warn else ui.info)("\n".join(lines).rstrip())
-    return 0
+    return 0 if jobs or existing else 2
 
 
 def _run_single(args, s: dict, folder: Path, ui: Ui) -> int:
     job = Job(args.ucs, read_ucs(args.ucs))
-    out = folder / report_filename(job.ucs.date)
+    out = find_reports(folder).get(job.ucs.date) or report_path(folder, job.ucs.date)
     if out.exists() and not args.force:
         if not ui.confirm(f"Отчёт {out.name} уже есть. Перезаписать?"):
             ui.error(f"Отчёт {out} уже существует. Запустите с --force, чтобы перезаписать.")
             return 3
-    res = _build(job, s, folder, args.prev)
+    res = _build(job, s, folder, out, args.prev)
     text = "Готово:\n" + "\n".join(_describe(res, job.ucs_path.name))
     month_lines = _monthly(s, folder)
     if month_lines:
