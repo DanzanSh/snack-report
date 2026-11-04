@@ -1,0 +1,11 @@
+.deps/
+.venv/
+build/
+dist/
+*.spec
+__pycache__/
+.pytest_cache/
+snack-report.log
+report/
+.idea/
+.mcp.json
