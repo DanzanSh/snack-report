@@ -14,6 +14,7 @@ from snack_report.report_builder import find_previous_report, normalize
 
 FIXTURE = Path(__file__).parent / "fixtures" / "test.xls"
 # В выгрузке: Козинак МИНИ 1, Вода 0.5 3, Вода 1,5 л 1, соки грацио стекло 1
+# «Вода 1,5 л» по встроенному сопоставлению пишется в строку «Вода 1,5»
 
 
 def _rows(path):
@@ -54,20 +55,25 @@ def test_first_run_and_next_day(tmp_path, template):
     # «Вода 0.5» совпала с «Вода 0,5» по названию
     r = row["Вода 0,5"]
     assert ws.cell(r, 3).value == 253 and ws.cell(r, 4).value == 3
-    assert ws.cell(r, 9).value == f"=C{r}+B{r}-D{r}-E{r}-G{r}"
+    assert ws.cell(r, 9).value == f"=C{r}+B{r}-D{r}-G{r}"
     assert ws.cell(row["Банан"], 4).value is None
+    assert ws["A1"].number_format == r"dd\.mm\.yyyy"
+
+    # «Вода 1,5 л» из UCS записана в строку эталона «Вода 1,5», новой строки нет
+    assert ws.cell(row["Вода 1,5"], 4).value == 1
+    assert "Вода 1,5 л" not in row
 
     # Остальные названия UCS добавлены как есть, перед «Прочее», а «Козинаки» не тронуты
-    new = ["Козинак МИНИ", "Вода 1,5 л", "соки грацио стекло"]
-    assert [row[n] for n in new] == [row["Прочее"] - 3, row["Прочее"] - 2, row["Прочее"] - 1]
+    new = ["Козинак МИНИ", "соки грацио стекло"]
+    assert [row[n] for n in new] == [row["Прочее"] - 2, row["Прочее"] - 1]
     assert row[new[0]] == row["Зефир 1000"] + 1
     for n in new:
         assert ws.cell(row[n], 4).value == 1
-        assert ws.cell(row[n], 9).value == f"=C{row[n]}+B{row[n]}-D{row[n]}-E{row[n]}-G{row[n]}"
+        assert ws.cell(row[n], 9).value == f"=C{row[n]}+B{row[n]}-D{row[n]}-G{row[n]}"
     assert ws.cell(row["Козинаки"], 4).value is None
     # формулы ниже вставки указывают на свои строки
     rp = row["Рис курица"]
-    assert ws.cell(rp, 9).value == f"=C{rp}+B{rp}-D{rp}-E{rp}-G{rp}"
+    assert ws.cell(rp, 9).value == f"=C{rp}+B{rp}-D{rp}-G{rp}"
 
     # Имена персонала очищены
     assert ws.cell(row["Администратор"], 8).value is None
@@ -116,6 +122,9 @@ def test_find_previous_report(tmp_path):
         (tmp_path / n).touch()
     assert find_previous_report(tmp_path, dt.date(2026, 10, 29)).name == "Отчёт_27.10.2026.xlsx"
     assert find_previous_report(tmp_path, dt.date(2026, 10, 1)) is None
+    # «ё» из двух символов (так её иногда сохраняет файловый менеджер)
+    (tmp_path / "Отче\u0308т_2026-10-28.xlsx").touch()
+    assert find_previous_report(tmp_path, dt.date(2026, 10, 29)).name == "Отче\u0308т_2026-10-28.xlsx"
 
 
 def test_folder_mode_processes_new_exports_in_date_order(tmp_path):
@@ -210,3 +219,33 @@ def test_new_item_row_with_only_name_gives_zero_morning(tmp_path, template):
 
     ws2, row2 = _rows(report_path(out, dt.date(2026, 10, 29)))
     assert ws2.cell(row2["Новинка"], 3).value == 0
+
+
+def test_aliases_sum_into_report_row(tmp_path, template):
+    from snack_report.report_builder import build_report
+
+    out = tmp_path / "out.xlsx"
+    res = build_report(
+        date=dt.date(2026, 11, 4),
+        sales={"протеиновый коктейль (на молоке)": 3, "протеиновый коктейль на воде": 1, "Протеин порц": 2,
+               "Протеин 30гр": 4, "Акция 3 посещения": 1, "Безлимит 1 месяц до 17-00": 2,
+               "Разовые посещения зал": 5, "Козинак МИНИ": 1},
+        source=template, from_template=True, output=out,
+    )
+    ws, row = _rows(out)
+    assert ws.cell(row["Протеин порц"], 4).value == 6
+    assert ws.cell(row["Протеин в пачках штучно"], 4).value == 4
+    # абонементы не попадают в отчёт, «Разовые посещения зал» — строка отчёта
+    assert res.ignored == ["Акция 3 посещения", "Безлимит 1 месяц до 17-00"]
+    assert "Акция 3 посещения" not in row and "Безлимит 1 месяц до 17-00" not in row
+    assert ws.cell(row["Разовые посещения зал"], 4).value == 5
+    assert res.added == ["Козинак МИНИ"]  # незнакомое название — новая строка
+
+
+def test_aliases_from_settings(tmp_path):
+    (tmp_path / "settings.ini").write_text(
+        "[aliases]\nСникерс мини = Батончик 700\nВода 1 л = Вода 0,5\n", encoding="utf-8")
+    s = main_mod.load_settings(tmp_path)
+    assert s["aliases"]["Сникерс мини"] == "Батончик 700"
+    assert s["aliases"]["Вода 1 л"] == "Вода 0,5"  # перекрывает встроенное
+    assert s["aliases"]["RedBull 0.25"] == "Ред Булл"  # встроенные сохраняются

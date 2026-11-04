@@ -11,7 +11,8 @@ If a previous report has no cash sheet (older format), one is added and the open
 What the script does for the stock sheet:
 - **ОстУтро**: today's opening stock (ОстУтро) is copied from yesterday's report (its ОстВечер column). If yesterday's ОстВечер is negative, ОстУтро starts at 0.
 - **Продано**: the sold count comes from the «Услуги» block of the UCS export. Payments are ignored.
-- **ОстВечер**: a formula, `ОстУтро + Приход − Продано − Долг − Списание`. It recalculates when you enter Приход, Долг or Списание by hand. Negative values are highlighted in red.
+  When UCS names an item differently from the report (e.g. «Вода 1 л» → «Вода 1»), the sale goes into the report's row; see «Item names» below.
+- **ОстВечер**: a formula, `ОстУтро + Приход − Продано − Списание` (Долг is not subtracted, as in the reference report). It recalculates when you enter Приход or Списание by hand. Negative values are highlighted in red.
 - **Приход, Долг, Имя, Списание, Причина**: cleared every day and filled in by hand.
 - **Staff rows** (Утеря карт, Наличие карт, Администратор, Тех персонал, Охрана): cleared every day.
 
@@ -60,9 +61,24 @@ Errors are written to `snack-report.log` next to the exe.
 
 ## Adding a new item
 
-Just sell it through UCS: the row appears in the report automatically.
+Just sell it through UCS: the row appears in the report automatically (before «Прочее»), and the program warns about it.
 To add an item ahead of time, add a row to the latest daily report in the current month's folder, named exactly as in UCS.
 The newest report serves as the template for the next day.
+
+### Item names
+
+Some items are named differently in UCS and in the report. The program has a built-in list
+(«Вода 1 л» → «Вода 1», «RedBull 0.25» → «Ред Булл», «Протеин 30гр» → «Протеин в пачках штучно» and others, see `config/settings.ini`).
+To add or change a pair, put a `[aliases]` section into `settings.ini` next to the exe:
+```
+[aliases]
+Название в UCS = Строка отчёта
+```
+Several UCS names can point to one row; their sales are added up.
+
+Subscriptions and visits from UCS («Акция 3 посещения», «Безлимит 1 месяц»…) are not counted in the report.
+The list is `ignored` in the `[report]` section of `settings.ini` (comma-separated, `*` matches any text).
+«Разовые посещения зал» is a report row and is still filled.
 
 Which rows count as sections and which as staff rows is set in `settings.ini` next to the exe (sample: `config/settings.ini`).
 

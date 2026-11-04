@@ -16,7 +16,7 @@ CASH_SHEET = "Ежедневный кассовый отчет"
 SNACK_SHEET = "Наличие снеков и напитков"
 CASH_TITLE = "Ежедневный кассовый отчет"
 ROAD_EXPENSES = 1000          # «Дорожные» — всегда 1000
-DATE_FORMAT = "DD.MM.YYYY"
+DATE_FORMAT = r"dd\.mm\.yyyy"  # как в эталонном отчёте
 
 # Ячейки кассового листа
 DATE_CELL = "B3"
