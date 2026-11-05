@@ -21,7 +21,7 @@ def folder(tmp_path, monkeypatch):
     f.mkdir()
     orig = main_mod.read_ucs
 
-    def fake(p):
+    def fake(p, *_, **__):
         rep = orig(p)
         rep.date = DATES.get(Path(p).name, rep.date)
         return rep

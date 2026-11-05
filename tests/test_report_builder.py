@@ -89,7 +89,7 @@ def test_first_run_and_next_day(tmp_path, template):
     # Следующий день: та же выгрузка, но за 29.10
     orig = main_mod.read_ucs
 
-    def read_next_day(p):
+    def read_next_day(p, *_, **__):
         rep = orig(p)
         rep.date = dt.date(2026, 10, 29)
         return rep
@@ -146,7 +146,7 @@ def test_folder_mode_processes_new_exports_in_date_order(tmp_path):
 
     orig = main_mod.read_ucs
 
-    def fake(p):
+    def fake(p, *_, **__):
         rep = orig(p)
         if Path(p).name == "ucs_b.xls":
             rep.date = dt.date(2026, 10, 29)
@@ -186,7 +186,7 @@ def test_negative_evening_gives_zero_morning(tmp_path, template):
 
     orig = main_mod.read_ucs
 
-    def read_next_day(p):
+    def read_next_day(p, *_, **__):
         rep = orig(p)
         rep.date = dt.date(2026, 10, 29)
         return rep
@@ -215,7 +215,7 @@ def test_new_item_row_with_only_name_gives_zero_morning(tmp_path, template):
 
     orig = main_mod.read_ucs
 
-    def read_next_day(p):
+    def read_next_day(p, *_, **__):
         rep = orig(p)
         rep.date = dt.date(2026, 10, 29)
         return rep
@@ -249,6 +249,31 @@ def test_aliases_sum_into_report_row(tmp_path, template):
     assert "Акция 3 посещения" not in row and "Безлимит 1 месяц до 17-00" not in row
     assert ws.cell(row["Разовые посещения зал"], 4).value == 5
     assert res.added == ["Козинак МИНИ"]  # незнакомое название — новая строка
+
+
+def test_lost_card_goes_to_staff_row(tmp_path, template):
+    from snack_report.report_builder import build_report, rebuild_report
+
+    out = tmp_path / "out.xlsx"
+    res = build_report(date=dt.date(2026, 11, 5), sales={"утеря карточки": 2},
+                       source=template, from_template=True, output=out)
+    ws, row = _rows(out)
+    assert ws.cell(row["Утеря карт"], 4).value == 2
+    assert res.added == []  # строка персонала, а не новый товар
+    assert ("Утеря карт", 2) in res.filled
+
+    res = rebuild_report(date=dt.date(2026, 11, 5), sales={"утеря карточки": 3}, existing=out)
+    ws, row = _rows(out)
+    assert ws.cell(row["Утеря карт"], 4).value == 3
+    assert res.added == []
+
+
+def test_price_split_from_settings(tmp_path):
+    (tmp_path / "settings.ini").write_text(
+        "[price_split]\nРазовое что-то = 1000: Строка А; 1 500: Строка Б\n", encoding="utf-8")
+    s = main_mod.load_settings(tmp_path)
+    assert s["price_split"]["Разовое что-то"] == {1000.0: "Строка А", 1500.0: "Строка Б"}
+    assert "Разовые зал Бокс" in s["price_split"]  # встроенное сохраняется
 
 
 def test_aliases_from_settings(tmp_path):

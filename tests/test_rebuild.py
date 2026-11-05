@@ -24,7 +24,7 @@ def folder(tmp_path, monkeypatch):
     f = tmp_path / "report"
     f.mkdir()
     exports: dict[str, UcsReport] = {}
-    monkeypatch.setattr(main_mod, "read_ucs", lambda p: exports[Path(p).name])
+    monkeypatch.setattr(main_mod, "read_ucs", lambda p, *_, **__: exports[Path(p).name])
 
     def put(name, date, sales):
         exports[name] = UcsReport(date, dict(sales))

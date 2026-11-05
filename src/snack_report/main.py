@@ -31,7 +31,7 @@ from .report_builder import (
 from .cleanup import declined, find_old, remember_declined, run_cleanup
 from .layout import move_into, organize, report_path, ucs_archive_dir
 from .monthly import MonthResult, update_monthly
-from .ucs_reader import UcsFormatError, UcsReport, read_ucs
+from .ucs_reader import DEFAULT_IGNORED_GROUPS, DEFAULT_PRICE_SPLIT, UcsFormatError, UcsReport, read_ucs
 
 log = logging.getLogger("snack_report")
 DEFAULT_REPORT_DIR = "report"
@@ -66,6 +66,12 @@ def load_settings(base: Path) -> dict:
     aliases = dict(DEFAULT_ALIASES)
     if cfg.has_section("aliases"):
         aliases.update({k.strip(): v.strip() for k, v in cfg.items("aliases") if v.strip()})
+    price_split = {k: dict(v) for k, v in DEFAULT_PRICE_SPLIT.items()}
+    if cfg.has_section("price_split"):
+        for name, spec in cfg.items("price_split"):
+            prices = _parse_prices(spec)
+            if prices:
+                price_split[name.strip()] = prices
     return {
         "reports_dir": resolve(cfg.get("paths", "reports_dir", fallback=DEFAULT_REPORT_DIR)),
         "template": resolve(template) if template else bundled_template(),
@@ -73,7 +79,23 @@ def load_settings(base: Path) -> dict:
         "staff_rows": rows("staff_rows", DEFAULT_STAFF_ROWS),
         "aliases": aliases,
         "ignored": rows("ignored", DEFAULT_IGNORED),
+        "ignored_groups": rows("ignored_groups", DEFAULT_IGNORED_GROUPS),
+        "price_split": price_split,
     }
+
+
+def _parse_prices(spec: str) -> dict[float, str]:
+    """«4000: Разовые посещения зал; 5000: Разовое Бокс» -> {4000.0: ..., 5000.0: ...}."""
+    prices = {}
+    for part in spec.split(";"):
+        price, sep, row = part.partition(":")
+        if sep and row.strip():
+            prices[float(price.strip().replace(",", ".").replace(" ", ""))] = row.strip()
+    return prices
+
+
+def _read(path: Path, s: dict) -> UcsReport:
+    return read_ucs(path, s["ignored_groups"], s["price_split"], keep=s["aliases"])
 
 
 class Ui:
@@ -169,6 +191,8 @@ def _build(job: Job, s: dict, folder: Path, out: Path, prev: Path | None = None)
         aliases=s["aliases"],
         ignored=s["ignored"],
     )
+    res.ignored = job.ucs.ignored + res.ignored
+    res.unsplit = list(job.ucs.unsplit)
     log.info("Сохранено %s; заполнено %d; новых строк %d", out, len(res.filled), len(res.added))
     return res
 
@@ -184,6 +208,8 @@ def _rebuild(job: Job, s: dict, existing: Path) -> BuildResult:
         aliases=s["aliases"],
         ignored=s["ignored"],
     )
+    res.ignored = job.ucs.ignored + res.ignored
+    res.unsplit = list(job.ucs.unsplit)
     log.info("Пересоздан %s; заполнено %d; новых строк %d", existing, len(res.filled), len(res.added))
     return res
 
@@ -253,6 +279,8 @@ def _describe(res: BuildResult, ucs_name: str) -> list[str]:
     lines.append(f"  Продано: {', '.join(f'{n} {fmt(q)}' for n, q in res.filled) or 'нет продаж'}")
     if res.ignored:
         lines.append(f"  Не учитываются (абонементы): {', '.join(res.ignored)}")
+    if res.unsplit:
+        lines.append(f"  Не разнесено по цене (впишите вручную): {', '.join(res.unsplit)}")
     if res.added:
         lines.append(f"  Новые товары (впишите им «ОстУтро»): {', '.join(res.added)}")
     if res.negative and not res.from_template:
@@ -278,7 +306,7 @@ def _run_folder(s: dict, folder: Path, ui: Ui) -> int:
         if not p.is_file() or p.suffix.lower() != ".xls" or p.name.startswith("~$"):
             continue
         try:
-            ucs = read_ucs(p)
+            ucs = _read(p, s)
         except UcsFormatError as e:
             log.warning("Пропущен %s: %s", p.name, e)
             skipped.append(f"{p.name}: {e}")
@@ -321,7 +349,7 @@ def _run_folder(s: dict, folder: Path, ui: Ui) -> int:
             warn = True
             continue
         lines += _describe(res, job.ucs_path.name) + [""]
-        warn |= bool(res.added) or bool(res.negative and not res.from_template)
+        warn |= bool(res.added) or bool(res.unsplit) or bool(res.negative and not res.from_template)
 
     done = [d for d in jobs if d not in failed]
     if done:  # отчёты за более поздние даты берут остатки на утро из обновлённых
@@ -350,7 +378,7 @@ def _run_folder(s: dict, folder: Path, ui: Ui) -> int:
 
 
 def _run_single(args, s: dict, folder: Path, ui: Ui) -> int:
-    job = Job(args.ucs, read_ucs(args.ucs))
+    job = Job(args.ucs, _read(args.ucs, s))
     existing = find_reports(folder).get(job.ucs.date)
     try:
         if existing:  # отчёт уже есть — пересоздаём, вписанное вручную сохраняется

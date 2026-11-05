@@ -20,7 +20,7 @@ def day(monkeypatch):
     orig = main_mod.read_ucs
 
     def go(args, date):
-        def fake(p):
+        def fake(p, *_, **__):
             rep = orig(p)
             rep.date = date
             return rep

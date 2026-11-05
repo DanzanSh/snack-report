@@ -94,8 +94,18 @@ To add or change a pair, put a `[aliases]` section into `settings.ini` next to t
 ```
 Several UCS names can point to one row; their sales are added up.
 
-Subscriptions and visits from UCS («Акция 3 посещения», «Безлимит 1 месяц»…) are not counted in the report.
-The list is `ignored` in the `[report]` section of `settings.ini` (comma-separated, `*` matches any text).
+Subscriptions and visits from UCS are not counted in the report: every item of the UCS group «Посещения»
+(«12 посещений», «Абонемент MIX 1мес», «Бойцовская зона группа 12пос»…) is skipped.
+The groups are `ignored_groups` in the `[report]` section of `settings.ini`; single items can be skipped with
+`ignored` (comma-separated, `*` matches any text).
+
+Exceptions inside «Посещения»:
+- «Разовые зал Бокс» is split by price: 4000 per visit goes to «Разовые посещения зал», 5000 to «Разовое Бокс»
+  (a mixed row, e.g. 3 pcs for 13000, becomes 2 + 1). If the sum can't be split, the program says so and
+  the row must be filled by hand. The rules are in the `[price_split]` section of `settings.ini`:
+  `Название в UCS = 4000: Строка; 5000: Строка`.
+- «утеря карточки» goes to «Продано» of the staff row «Утеря карт». Any UCS item with an alias in `[aliases]`
+  is taken even from a skipped group.
 «Разовые посещения зал» is a report row and is still filled.
 
 Which rows count as sections and which as staff rows is set in `settings.ini` next to the exe (sample: `config/settings.ini`).

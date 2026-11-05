@@ -56,6 +56,7 @@ DEFAULT_ALIASES = {
     "Вода 1 л": "Вода 1",
     "Вода 1,5 л": "Вода 1,5",
     "энергетик вейк апп": "энергетик вейкапп",
+    "утеря карточки": "Утеря карт",
 }
 # Услуги UCS, которые не попадают в отчёт (абонементы и посещения). * — любые символы.
 DEFAULT_IGNORED = ("Акция * посещени*", "Безлимит*")
@@ -120,6 +121,7 @@ class Layout:
     item_rows: dict[str, int]     # нормализованное название товара -> строка
     item_names: dict[str, str]    # нормализованное -> как написано в отчёте
     staff_rows: list[int]
+    staff_keys: dict[str, int]    # нормализованное название строки персонала -> строка
     first_section_row: int | None  # первая строка-раздел/персонал после товаров основного блока
 
 
@@ -141,7 +143,7 @@ def detect_layout(ws: Worksheet, section_rows: tuple[str, ...], staff_rows: tupl
 
     sections = {normalize(s) for s in section_rows}
     staff = {normalize(s) for s in staff_rows}
-    lay = Layout(header_row, cols, {}, {}, [], None)
+    lay = Layout(header_row, cols, {}, {}, [], {}, None)
     for r in range(header_row + 1, ws.max_row + 1):
         v = ws.cell(r, NAME_COL).value
         if v is None or not str(v).strip():
@@ -152,6 +154,7 @@ def detect_layout(ws: Worksheet, section_rows: tuple[str, ...], staff_rows: tupl
                 lay.first_section_row = r
             if key in staff:
                 lay.staff_rows.append(r)
+                lay.staff_keys[key] = r
             continue
         if key in lay.item_rows:
             raise ReportFormatError(f"Товар «{v}» встречается в отчёте дважды (строки {lay.item_rows[key]} и {r})")
@@ -226,9 +229,18 @@ def _match_sales(sales: dict[str, float], lay: Layout, aliases: dict[str, str], 
         name = alias.get(normalize(name), name)
         key = normalize(name)
         sold[key] = sold.get(key, 0) + qty
-        if key not in lay.item_rows and key not in new_names:
+        if key not in lay.item_rows and key not in lay.staff_keys and key not in new_names:
             new_names[key] = name
     return sold, new_names, skipped
+
+
+def _fill_staff_sold(ws: Worksheet, lay: Layout, sold: dict[str, float], result: "BuildResult") -> None:
+    """Продажи UCS, сопоставленные строкам персонала (например, «Утеря карт»), — в «Продано» этой строки."""
+    for key, r in lay.staff_keys.items():
+        s = sold.get(key)
+        if s:
+            ws.cell(r, lay.cols[COL_SOLD]).value = _clean(s)
+            result.filled.append((str(ws.cell(r, NAME_COL).value).strip(), s))
 
 
 def _evening_formula(c: dict[str, int], r: int) -> str:
@@ -245,6 +257,7 @@ class BuildResult:
     added: list[str] = field(default_factory=list)          # новые строки (названия из UCS как есть)
     negative: list[tuple[str, float]] = field(default_factory=list)
     ignored: list[str] = field(default_factory=list)        # услуги UCS, не попавшие в отчёт
+    unsplit: list[str] = field(default_factory=list)        # услуги UCS, не разнесённые по цене
     cash_opening: float | None = None   # остаток наличных на начало дня; None — вносят вручную
     rebuilt: bool = False               # пересоздан по новой выгрузке, вписанное вручную сохранено
 
@@ -317,6 +330,7 @@ def build_report(
             cell = ws.cell(r, col)
             if not isinstance(cell, MergedCell):
                 cell.value = None
+    _fill_staff_sold(ws, lay, sold, result)
 
     # 5. Кассовый лист: остаток наличных на начало дня — из вчерашнего отчёта
     opening = None
@@ -372,6 +386,7 @@ def rebuild_report(
         evening = g(r, COL_MORNING) + g(r, COL_INCOME) - (s or 0) - g(r, COL_WRITEOFF)
         if evening < 0:
             result.negative.append((lay.item_names[key], evening))
+    _fill_staff_sold(ws, lay, sold, result)
 
     cash_ws, _ = ensure_sheets(wb)
     opening = cash_ws[OPENING_CELL].value
