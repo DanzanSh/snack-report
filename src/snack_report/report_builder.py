@@ -17,7 +17,14 @@ from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
-from .cash_report import closing_cash, ensure_sheets, fill_cash, get_cash_sheet, get_snack_sheet
+from .cash_report import (
+    OPENING_CELL,
+    closing_cash,
+    ensure_sheets,
+    fill_cash,
+    get_cash_sheet,
+    get_snack_sheet,
+)
 
 REPORT_PREFIX = "Отчёт_"
 # Отчёт_ГГГГ-ММ-ДД.xlsx; старый формат Отчёт_ДД.ММ.ГГГГ.xlsx тоже читается
@@ -205,6 +212,30 @@ def _reset_negative_highlight(ws: Worksheet, lay: Layout) -> None:
     )
 
 
+def _match_sales(sales: dict[str, float], lay: Layout, aliases: dict[str, str], ignored) \
+        -> tuple[dict[str, float], dict[str, str], list[str]]:
+    """Продажи UCS по строкам отчёта: (продано по ключу, новые товары ключ -> название, пропущенные услуги)."""
+    sold: dict[str, float] = {}
+    new_names: dict[str, str] = {}
+    alias = {normalize(k): v for k, v in aliases.items()}
+    skipped: list[str] = []
+    for name, qty in sales.items():
+        if is_ignored(name, ignored):
+            skipped.append(name)
+            continue
+        name = alias.get(normalize(name), name)
+        key = normalize(name)
+        sold[key] = sold.get(key, 0) + qty
+        if key not in lay.item_rows and key not in new_names:
+            new_names[key] = name
+    return sold, new_names, skipped
+
+
+def _evening_formula(c: dict[str, int], r: int) -> str:
+    L = lambda col: get_column_letter(c[col])  # noqa: E731
+    return f"={L(COL_MORNING)}{r}+{L(COL_INCOME)}{r}-{L(COL_SOLD)}{r}-{L(COL_WRITEOFF)}{r}"
+
+
 @dataclass
 class BuildResult:
     output: Path
@@ -215,6 +246,7 @@ class BuildResult:
     negative: list[tuple[str, float]] = field(default_factory=list)
     ignored: list[str] = field(default_factory=list)        # услуги UCS, не попавшие в отчёт
     cash_opening: float | None = None   # остаток наличных на начало дня; None — вносят вручную
+    rebuilt: bool = False               # пересоздан по новой выгрузке, вписанное вручную сохранено
 
 
 def build_report(
@@ -252,19 +284,7 @@ def build_report(
             morning[key] = max(evening_value(ws, ws_values, c, r), 0.0)  # минус вчера — сегодня с нуля
 
     # 2. Продажи: суммируем по нормализованному названию, новые товары добавляем строками
-    sold: dict[str, float] = {}
-    new_names: dict[str, str] = {}
-    alias = {normalize(k): v for k, v in aliases.items()}
-    skipped: list[str] = []
-    for name, qty in sales.items():
-        if is_ignored(name, ignored):
-            skipped.append(name)
-            continue
-        name = alias.get(normalize(name), name)
-        key = normalize(name)
-        sold[key] = sold.get(key, 0) + qty
-        if key not in lay.item_rows and key not in new_names:
-            new_names[key] = name
+    sold, new_names, skipped = _match_sales(sales, lay, aliases, ignored)
     result = BuildResult(output=output, source=source, from_template=from_template, added=list(new_names.values()),
                          ignored=skipped)
     if new_names:
@@ -277,7 +297,6 @@ def build_report(
     date_cell.value = date
     date_cell.number_format = DATE_FORMAT
 
-    L = lambda col: get_column_letter(c[col])  # noqa: E731
     for key, r in lay.item_rows.items():
         for col in CLEARED_COLS:
             if col in c:
@@ -288,9 +307,7 @@ def build_report(
         if s:
             ws.cell(r, c[COL_SOLD]).value = _clean(s)
             result.filled.append((lay.item_names[key], s))
-        ws.cell(r, c[COL_EVENING]).value = (
-            f"={L(COL_MORNING)}{r}+{L(COL_INCOME)}{r}-{L(COL_SOLD)}{r}-{L(COL_WRITEOFF)}{r}"
-        )
+        ws.cell(r, c[COL_EVENING]).value = _evening_formula(c, r)
         if m - (s or 0) < 0:
             result.negative.append((lay.item_names[key], m - (s or 0)))
 
@@ -313,3 +330,111 @@ def build_report(
     output.parent.mkdir(parents=True, exist_ok=True)
     wb.save(output)
     return result
+
+
+def rebuild_report(
+    *,
+    date: dt.date,
+    sales: dict[str, float],
+    existing: Path,
+    output: Path | None = None,
+    section_rows: tuple[str, ...] = DEFAULT_SECTION_ROWS,
+    staff_rows: tuple[str, ...] = DEFAULT_STAFF_ROWS,
+    aliases: dict[str, str] = DEFAULT_ALIASES,
+    ignored: tuple[str, ...] = DEFAULT_IGNORED,
+) -> BuildResult:
+    """Пересоздаёт уже готовый отчёт по новой выгрузке UCS.
+
+    Меняется только «Продано» (и добавляются строки новых товаров). Всё вписанное вручную остаётся:
+    ОстУтро, Приход, Долг, Имя, Списание, Причина, строки персонала и весь кассовый лист.
+    """
+    output = output or existing
+    wb = openpyxl.load_workbook(existing)
+    ws = get_snack_sheet(wb)
+    lay = detect_layout(ws, section_rows, staff_rows)
+    sold, new_names, skipped = _match_sales(sales, lay, aliases, ignored)
+    result = BuildResult(output=output, source=existing, from_template=False, added=list(new_names.values()),
+                         ignored=skipped, rebuilt=True)
+    if new_names:
+        _insert_items(ws, lay, list(new_names.values()))
+        lay = detect_layout(ws, section_rows, staff_rows)
+    c = lay.cols
+
+    g = lambda r, col: _num(ws.cell(r, c[col]).value) if col in c else 0.0  # noqa: E731
+    for key, r in lay.item_rows.items():
+        if key in new_names:
+            ws.cell(r, c[COL_MORNING]).value = 0
+        s = sold.get(key)
+        ws.cell(r, c[COL_SOLD]).value = _clean(s) if s else None
+        if s:
+            result.filled.append((lay.item_names[key], s))
+        ws.cell(r, c[COL_EVENING]).value = _evening_formula(c, r)
+        evening = g(r, COL_MORNING) + g(r, COL_INCOME) - (s or 0) - g(r, COL_WRITEOFF)
+        if evening < 0:
+            result.negative.append((lay.item_names[key], evening))
+
+    cash_ws, _ = ensure_sheets(wb)
+    opening = cash_ws[OPENING_CELL].value
+    result.cash_opening = float(opening) if isinstance(opening, (int, float)) and not isinstance(opening, bool) \
+        else None
+    _reset_negative_highlight(ws, lay)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    wb.save(output)
+    return result
+
+
+def refresh_opening(
+    report: Path,
+    prev: Path,
+    section_rows: tuple[str, ...] = DEFAULT_SECTION_ROWS,
+    staff_rows: tuple[str, ...] = DEFAULT_STAFF_ROWS,
+) -> list[str]:
+    """Обновляет ОстУтро и остаток наличных на начало дня по предыдущему отчёту (после пересоздания).
+
+    Товары, появившиеся в предыдущем отчёте, добавляются строками. Остальное не трогается.
+    Файл сохраняется, только если что-то поменялось. Возвращает, что поменялось.
+    """
+    wb_prev = openpyxl.load_workbook(prev)
+    wb_prev_values = openpyxl.load_workbook(prev, data_only=True)
+    ws_p, ws_pv = get_snack_sheet(wb_prev), get_snack_sheet(wb_prev_values)
+    lay_p = detect_layout(ws_p, section_rows, staff_rows)
+    evening = {k: max(evening_value(ws_p, ws_pv, lay_p.cols, r), 0.0) for k, r in lay_p.item_rows.items()}
+
+    wb = openpyxl.load_workbook(report)
+    ws = get_snack_sheet(wb)
+    lay = detect_layout(ws, section_rows, staff_rows)
+    missing = [lay_p.item_names[k] for k, _ in sorted(lay_p.item_rows.items(), key=lambda kv: kv[1])
+               if k not in lay.item_rows]
+    if missing:
+        _insert_items(ws, lay, missing)
+        lay = detect_layout(ws, section_rows, staff_rows)
+    c = lay.cols
+    new_keys = {normalize(n) for n in missing}
+
+    changed: list[str] = []
+    for key, r in lay.item_rows.items():
+        if key not in evening:
+            continue  # товар есть только в этом отчёте — не трогаем
+        cell = ws.cell(r, c[COL_MORNING])
+        if key in new_keys:
+            for col in CLEARED_COLS:
+                if col in c:
+                    ws.cell(r, c[col]).value = None
+            ws.cell(r, c[COL_EVENING]).value = _evening_formula(c, r)
+        if key in new_keys or _num(cell.value) != evening[key]:
+            cell.value = _clean(evening[key])
+            changed.append(lay.item_names[key])
+
+    prev_cash, cash = get_cash_sheet(wb_prev), get_cash_sheet(wb)
+    if prev_cash is not None and cash is not None:
+        opening = closing_cash(prev_cash, get_cash_sheet(wb_prev_values))
+        cur = cash[OPENING_CELL].value
+        if not isinstance(cur, (int, float)) or isinstance(cur, bool) or float(cur) != opening:
+            cash[OPENING_CELL].value = int(opening) if float(opening).is_integer() else round(opening, 2)
+            changed.append("остаток наличных на начало дня")
+
+    if changed:
+        if missing:
+            _reset_negative_highlight(ws, lay)
+        wb.save(report)
+    return changed

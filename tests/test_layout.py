@@ -68,17 +68,19 @@ def test_folder_run_archives_exports(folder):
     assert run(["--console", "--out", str(folder)]) == 0
 
 
-def test_export_for_existing_report_is_archived_not_rebuilt(folder):
+def test_export_for_existing_report_is_rebuilt_and_archived(folder):
     shutil.copy(FIXTURE, folder / "a.xls")
     assert run(["--console", "--out", str(folder)]) == 0
     day = report_path(folder, dt.date(2026, 10, 31))
-    mtime = day.stat().st_mtime_ns
 
     shutil.copy(FIXTURE, folder / "a.xls")             # ту же выгрузку положили ещё раз
     assert run(["--console", "--out", str(folder)]) == 0
-    assert day.stat().st_mtime_ns == mtime
     assert (day.parent / "UCS" / "a (2).xls").exists()
     assert not (folder / "a.xls").exists()
+    ws = get_snack_sheet(openpyxl.load_workbook(day))
+    row = {ws.cell(r, 1).value: r for r in range(3, ws.max_row + 1)}
+    assert ws.cell(row["Вода 0,5"], 4).value == 3
+    assert list(row).count("Козинак МИНИ") == 1        # новые строки не задвоились
 
 
 def test_old_flat_folder_is_migrated(folder):

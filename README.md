@@ -35,13 +35,31 @@ any folder\
 2. Every day, save the UCS export (`.xls`, any file name) into `report` and double-click `SnackReport.exe`.
 3. For every export whose date has no report yet, the program creates `Отчёт_ГГГГ-ММ-ДД.xlsx`
    in that month's folder, in date order. ОстУтро is taken from the previous report, even if it is in last month's folder.
-   Exports that already have a report are not rebuilt.
+   If a report for that date already exists, it is rebuilt (see «Rebuilding a report» below).
 4. After that, every export with a report is moved to `<month>\UCS`. If the same name is already there,
    ` (2)` is added. Files the program cannot read stay in `report`, so whatever is left there needs attention.
    Reports from older versions (`Отчёт_ДД.ММ.ГГГГ.xlsx` directly in `report`) are moved into month folders
    automatically on the next launch. The old file name format is still read.
 5. **First report:** the template is built into the exe. In the first report, enter ОстУтро by hand;
    ОстВечер recalculates on its own, and the next day takes its stock from there.
+
+## Rebuilding a report
+
+If a report for a day is already made and you get a new UCS export for that day, put the new export into `report` and launch the program
+(or drag it onto the exe). The report is rebuilt:
+- Продано is taken from the new export; new items get their own rows.
+- Everything entered by hand stays: ОстУтро, Приход, Долг, Имя, Списание, Причина, staff rows and the whole cash sheet.
+- Reports for later days are updated in a chain: their ОстУтро (from the previous day's ОстВечер) and «Остаток наличных на начала дня».
+  Everything else in them stays. If ОстУтро was corrected by hand in a later report, that correction is overwritten.
+- If the report is open in Excel, nothing is saved: close the file and launch again (the export stays in `report`).
+
+## Quarterly cleanup
+
+When a new quarter starts (January, April, July, October), the program offers to delete daily reports and UCS exports
+for the earlier quarters. Monthly reports and month folders stay. Nothing is deleted without «Да».
+If you answer «Нет», it asks again next quarter (the answer is kept in `report\.cleanup`).
+The month with the latest daily report is never cleaned: the next day takes its ОстУтро from that report.
+In `--console` mode the program only mentions old files and never deletes them.
 
 ## Monthly report
 
@@ -56,7 +74,7 @@ On every launch the program also updates `Месяц_ММ.ГГГГ.xlsx` in each
   e.g. after you entered Приход and saved the daily file.
 - Days without a report (weekends, holidays) are not an error and are not flagged. The next day's ОстУтро is taken from the latest earlier report.
 
-You can also drag a single `.xls` onto the exe: the report goes into its month folder in `report` (it asks before overwriting). The dragged file itself is not moved.
+You can also drag a single `.xls` onto the exe: the report goes into its month folder in `report` (an existing report for that date is rebuilt). The dragged file itself is not moved.
 Errors are written to `snack-report.log` next to the exe.
 
 ## Adding a new item

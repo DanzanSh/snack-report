@@ -3,11 +3,14 @@ r"""SnackReport: выгрузки UCS «Сводка по доходу» → е�
 Запуск без аргументов: берёт все выгрузки UCS (.xls) из папки `report` рядом с exe
 и для каждой даты, по которой ещё нет отчёта, создаёт report\ГГГГ-ММ Месяц\Отчёт_ГГГГ-ММ-ДД.xlsx.
 Обработанные выгрузки переносятся в report\ГГГГ-ММ Месяц\UCS.
+Новая выгрузка за дату, по которой отчёт уже есть, пересоздаёт его: меняется «Продано»,
+вписанное вручную остаётся, у следующих дней пересчитываются остатки на утро.
 """
 from __future__ import annotations
 
 import argparse
 import configparser
+import datetime as dt
 import logging
 import sys
 from dataclasses import dataclass
@@ -22,7 +25,10 @@ from .report_builder import (
     build_report,
     find_previous_report,
     find_reports,
+    rebuild_report,
+    refresh_opening,
 )
+from .cleanup import declined, find_old, remember_declined, run_cleanup
 from .layout import move_into, organize, report_path, ucs_archive_dir
 from .monthly import MonthResult, update_monthly
 from .ucs_reader import UcsFormatError, UcsReport, read_ucs
@@ -101,9 +107,9 @@ def run(argv: list[str] | None = None) -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("ucs", nargs="?", type=Path,
                     help="одна выгрузка UCS (.xls); без неё обрабатывается вся папка report")
-    ap.add_argument("--prev", type=Path, help="вчерашний отчёт (по умолчанию — самый свежий в папке)")
+    ap.add_argument("--prev", type=Path, help="вчерашний отчёт для нового отчёта (по умолчанию — самый свежий в папке)")
     ap.add_argument("--out", type=Path, help="папка с выгрузками и отчётами (по умолчанию report рядом с exe)")
-    ap.add_argument("--force", action="store_true", help="перезаписать отчёт за эту дату без вопроса")
+    ap.add_argument("--force", action="store_true", help="(устарело, ни на что не влияет: отчёт пересоздаётся всегда)")
     ap.add_argument("--console", action="store_true", help="без окон, вывод в консоль")
     args = ap.parse_args(argv)
 
@@ -167,17 +173,83 @@ def _build(job: Job, s: dict, folder: Path, out: Path, prev: Path | None = None)
     return res
 
 
+def _rebuild(job: Job, s: dict, existing: Path) -> BuildResult:
+    log.info("%s → пересоздание %s", job.ucs_path.name, existing.name)
+    res = rebuild_report(
+        date=job.ucs.date,
+        sales=job.ucs.sales,
+        existing=existing,
+        section_rows=s["section_rows"],
+        staff_rows=s["staff_rows"],
+        aliases=s["aliases"],
+        ignored=s["ignored"],
+    )
+    log.info("Пересоздан %s; заполнено %d; новых строк %d", existing, len(res.filled), len(res.added))
+    return res
+
+
+LOCKED = "закройте файл в Excel и запустите программу снова"
+
+
+def _chain(s: dict, folder: Path, start: dt.date) -> tuple[list[str], list[str]]:
+    """Обновляет ОстУтро и остаток наличных в отчётах после даты `start`, по цепочке.
+    Возвращает (строки для окна, проблемы)."""
+    reports = find_reports(folder)
+    dates = sorted(reports)
+    lines: list[str] = []
+    for prev_d, d in zip(dates, dates[1:]):
+        if d <= start:
+            continue
+        try:
+            changed = refresh_opening(reports[d], reports[prev_d], s["section_rows"], s["staff_rows"])
+        except PermissionError:
+            log.warning("Не удалось обновить %s: файл занят", reports[d])
+            return lines, [f"{reports[d].name}: остатки на утро не обновлены, {LOCKED}"]
+        if changed:
+            log.info("Обновлены остатки на утро %s: %s", reports[d].name, ", ".join(changed))
+            lines.append(f"{reports[d].name}: {', '.join(changed)}")
+    return lines, []
+
+
+def _today() -> dt.date:
+    return dt.date.today()
+
+
+def _cleanup(folder: Path, ui: Ui) -> list[str]:
+    """Раз в квартал предлагает удалить дневные отчёты и выгрузки UCS за прошлые кварталы."""
+    today = _today()
+    plan = find_old(folder, today)
+    if not plan.files or declined(folder, today):
+        return []
+    months = plan.describe_months()
+    if not ui.gui:  # без окон не спрашиваем и отказ не запоминаем
+        return [f"Можно удалить старые дневные отчёты и выгрузки UCS ({months}): запустите программу без --console.", ""]
+    question = (f"Начался новый квартал.\n\nУдалить дневные отчёты и выгрузки UCS за: {months}?\n"
+                f"Файлов: {len(plan.files)}. Месячные отчёты останутся.")
+    if not ui.confirm(question):
+        remember_declined(folder, today)
+        log.info("Очистка за %s: отказ", months)
+        return []
+    deleted, errors = run_cleanup(folder, plan)
+    for p in deleted:
+        log.info("Удалён %s", p)
+    return [f"Удалено старых файлов: {len(deleted)} ({months})", ""] + _bullets("Не удалены:", errors)
+
+
 def _describe(res: BuildResult, ucs_name: str) -> list[str]:
     fmt = lambda x: f"{x:g}"  # noqa: E731
-    lines = [f"{res.output.name}  ← {ucs_name}"]
-    if res.from_template:
-        lines.append("  Первый отчёт: впишите в нём «ОстУтро» вручную, «ОстВечер» пересчитается сам.")
+    if res.rebuilt:
+        lines = [f"{res.output.name}  ← {ucs_name}  (пересоздан, вписанное вручную сохранено)"]
     else:
-        lines.append(f"  Остатки на утро из: {res.source.name}")
-    if res.cash_opening is not None:
-        lines.append(f"  Остаток наличных на начало дня: {fmt(res.cash_opening)}")
-    else:
-        lines.append("  Кассовый отчёт: впишите «Остаток наличных на начала дня» вручную.")
+        lines = [f"{res.output.name}  ← {ucs_name}"]
+        if res.from_template:
+            lines.append("  Первый отчёт: впишите в нём «ОстУтро» вручную, «ОстВечер» пересчитается сам.")
+        else:
+            lines.append(f"  Остатки на утро из: {res.source.name}")
+        if res.cash_opening is not None:
+            lines.append(f"  Остаток наличных на начало дня: {fmt(res.cash_opening)}")
+        else:
+            lines.append("  Кассовый отчёт: впишите «Остаток наличных на начала дня» вручную.")
     lines.append(f"  Продано: {', '.join(f'{n} {fmt(q)}' for n, q in res.filled) or 'нет продаж'}")
     if res.ignored:
         lines.append(f"  Не учитываются (абонементы): {', '.join(res.ignored)}")
@@ -222,24 +294,44 @@ def _run_folder(s: dict, folder: Path, ui: Ui) -> int:
             older.append(job)
 
     existing = find_reports(folder)
-    todo = [jobs[d] for d in sorted(jobs) if d not in existing]
+    created = [d for d in jobs if d not in existing]
+    rebuilt = [d for d in jobs if d in existing]
     lines: list[str] = []
     warn = bool(skipped or problems)
-    if todo:
-        lines += [f"Создано отчётов: {len(todo)} (папка {folder})", ""]
-    elif jobs:
-        lines += [f"Новых выгрузок нет: по всем .xls в папке {folder} отчёты уже созданы.", ""]
-        warn = True
+    if jobs:
+        counts = [f"создано отчётов: {len(created)}"] if created else []
+        counts += [f"пересоздано: {len(rebuilt)}"] if rebuilt else []
+        lines += [f"{', '.join(counts).capitalize()} (папка {folder})", ""]
     else:
         lines += [f"Новых выгрузок нет. Положите выгрузку UCS (.xls) в папку {folder}.", ""]
         warn = True
-    for job in todo:  # по возрастанию даты: каждый следующий берёт остатки из предыдущего
-        res = _build(job, s, folder, report_path(folder, job.ucs.date))
+
+    failed: set[dt.date] = set()
+    for d in sorted(jobs):  # по возрастанию даты: каждый следующий берёт остатки из предыдущего
+        job = jobs[d]
+        try:
+            if d in existing:
+                res = _rebuild(job, s, existing[d])
+            else:
+                res = _build(job, s, folder, report_path(folder, d))
+        except PermissionError:
+            log.warning("Не удалось сохранить отчёт за %s: файл занят", d)
+            problems.append(f"{job.ucs_path.name}: отчёт за {d:%d.%m.%Y} не сохранён, {LOCKED}")
+            failed.add(d)
+            warn = True
+            continue
         lines += _describe(res, job.ucs_path.name) + [""]
         warn |= bool(res.added) or bool(res.negative and not res.from_template)
 
+    done = [d for d in jobs if d not in failed]
+    if done:  # отчёты за более поздние даты берут остатки на утро из обновлённых
+        chain, chain_problems = _chain(s, folder, min(done))
+        lines += _bullets("Обновлены остатки на утро:", chain)
+        problems += chain_problems
+        warn |= bool(chain_problems)
+
     # отчёт по выгрузке есть — переносим её в архив месяца, в корне остаются только необработанные
-    for job in [*jobs.values(), *older]:
+    for job in [*(jobs[d] for d in done), *older]:
         try:
             dst = move_into(job.ucs_path, ucs_archive_dir(folder, job.ucs.date))
             log.info("%s перенесён в %s", job.ucs_path.name, dst)
@@ -248,27 +340,36 @@ def _run_folder(s: dict, folder: Path, ui: Ui) -> int:
             problems.append(f"{job.ucs_path.name}: не удалось перенести в архив ({e})")
             warn = True
 
-    lines += _bullets("Пропущены:", skipped) + _bullets("Не перенесены:", problems)
+    lines += _bullets("Пропущены:", skipped) + _bullets("Не обработаны:", problems)
     month_lines = _monthly(s, folder)
     if month_lines:
-        lines += ["Месячные отчёты:"] + month_lines
+        lines += ["Месячные отчёты:"] + month_lines + [""]
+    lines += _cleanup(folder, ui)
     (ui.warn if warn else ui.info)("\n".join(lines).rstrip())
     return 0 if jobs or existing else 2
 
 
 def _run_single(args, s: dict, folder: Path, ui: Ui) -> int:
     job = Job(args.ucs, read_ucs(args.ucs))
-    out = find_reports(folder).get(job.ucs.date) or report_path(folder, job.ucs.date)
-    if out.exists() and not args.force:
-        if not ui.confirm(f"Отчёт {out.name} уже есть. Перезаписать?"):
-            ui.error(f"Отчёт {out} уже существует. Запустите с --force, чтобы перезаписать.")
-            return 3
-    res = _build(job, s, folder, out, args.prev)
+    existing = find_reports(folder).get(job.ucs.date)
+    try:
+        if existing:  # отчёт уже есть — пересоздаём, вписанное вручную сохраняется
+            res = _rebuild(job, s, existing)
+        else:
+            res = _build(job, s, folder, report_path(folder, job.ucs.date), args.prev)
+    except PermissionError:
+        ui.error(f"Отчёт за {job.ucs.date:%d.%m.%Y} не сохранён: {LOCKED}.")
+        return 3
     text = "Готово:\n" + "\n".join(_describe(res, job.ucs_path.name))
+    chain, chain_problems = _chain(s, folder, job.ucs.date)
+    if chain:
+        text += "\n\nОбновлены остатки на утро:\n" + "\n".join(f"  • {x}" for x in chain)
+    if chain_problems:
+        text += "\n\n" + "\n".join(chain_problems)
     month_lines = _monthly(s, folder)
     if month_lines:
         text += "\n\nМесячные отчёты:\n" + "\n".join(month_lines)
-    (ui.warn if res.added else ui.info)(text)
+    (ui.warn if res.added or chain_problems else ui.info)(text)
     return 0
 
 

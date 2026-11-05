@@ -109,12 +109,21 @@ def test_first_run_and_next_day(tmp_path, template):
     assert ws2.cell(row2["Охрана"], 8).value is None
 
 
-def test_existing_report_not_overwritten(tmp_path, template):
+def test_dragging_export_again_rebuilds_report(tmp_path, template):
     out = tmp_path / "reports"
     args = [str(FIXTURE), "--console", "--out", str(out), "--prev", str(template)]
     assert run(args) == 0
-    assert run(args) == 3
-    assert run(args + ["--force"]) == 0
+    day = report_path(out, dt.date(2026, 10, 28))
+    wb = openpyxl.load_workbook(day)
+    ws = get_snack_sheet(wb)
+    row = {ws.cell(r, 1).value: r for r in range(3, ws.max_row + 1)}
+    ws.cell(row["Вода 0,5"], 2).value = 10   # Приход вписан вручную
+    wb.save(day)
+
+    assert run(args) == 0                    # без вопроса: вписанное вручную не теряется
+    ws, row = _rows(day)
+    assert ws.cell(row["Вода 0,5"], 2).value == 10
+    assert ws.cell(row["Вода 0,5"], 4).value == 3
 
 
 def test_find_previous_report(tmp_path):
