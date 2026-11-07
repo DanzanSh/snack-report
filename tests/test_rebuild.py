@@ -131,3 +131,40 @@ def test_report_open_in_excel_keeps_export(folder, monkeypatch):
     monkeypatch.setattr(main_mod, "rebuild_report", locked)
     assert run(["--console", "--out", str(folder)]) == 0
     assert (folder / "d1.xls").exists()   # остаётся в корне, обработается при следующем запуске
+
+
+def test_rebuild_takes_opening_from_previous_day(folder):
+    folder, put = folder
+    put("d1.xls", D1, {"Вода 0.5": 3})
+    put("d2.xls", D2, {"Вода 0.5": 1})
+    assert run(["--console", "--out", str(folder)]) == 0
+    p1, p2 = report_path(folder, D1), report_path(folder, D2)
+
+    # вчерашний отчёт поправили уже после того, как сделан сегодняшний
+    wb, ws, row = _open(p1)
+    m1 = _num(ws.cell(row[WATER], MORNING).value)
+    ws.cell(row[WATER], INCOME).value = 20
+    cash = get_cash_sheet(wb)
+    c5_1 = _num(cash["C5"].value)
+    cash["C17"].value = 3000
+    wb.save(p1)
+
+    # в сегодняшнем ОстУтро и наличные поправили руками, плюс свой приход
+    wb, ws, row = _open(p2)
+    ws.cell(row[WATER], MORNING).value = 999
+    ws.cell(row["Банан"], INCOME).value = 4
+    cash = get_cash_sheet(wb)
+    cash["C5"].value = 12345
+    cash["C17"].value = 700
+    wb.save(p2)
+
+    put("d2.xls", D2, {"Вода 0.5": 2})
+    assert run(["--console", "--out", str(folder)]) == 0
+
+    wb, ws, row = _open(p2)
+    assert _num(ws.cell(row[WATER], MORNING).value) == max(m1 + 20 - 3, 0)
+    assert ws.cell(row[WATER], SOLD).value == 2
+    assert ws.cell(row["Банан"], INCOME).value == 4
+    cash = get_cash_sheet(wb)
+    assert cash["C5"].value == c5_1 + 3000 - 1000
+    assert cash["C17"].value == 700

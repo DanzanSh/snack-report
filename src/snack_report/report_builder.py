@@ -291,6 +291,7 @@ class BuildResult:
     unsplit: list[str] = field(default_factory=list)        # услуги UCS, не разнесённые по цене
     cash_opening: float | None = None   # остаток наличных на начало дня; None — вносят вручную
     rebuilt: bool = False               # пересоздан по новой выгрузке, вписанное вручную сохранено
+    opening_changed: list[str] = field(default_factory=list)  # при пересоздании: что обновилось из прошлого отчёта
 
 
 def build_report(
@@ -387,19 +388,26 @@ def rebuild_report(
     staff_rows: tuple[str, ...] = DEFAULT_STAFF_ROWS,
     aliases: dict[str, str] = DEFAULT_ALIASES,
     ignored: tuple[str, ...] = DEFAULT_IGNORED,
+    prev: Path | None = None,
 ) -> BuildResult:
     """Пересоздаёт уже готовый отчёт по новой выгрузке UCS.
 
-    Меняется только «Продано» (и добавляются строки новых товаров). Всё вписанное вручную остаётся:
-    ОстУтро, Приход, Долг, Имя, Списание, Причина, строки персонала и весь кассовый лист.
+    Меняется «Продано» (и добавляются строки новых товаров). Если есть предыдущий отчёт `prev`,
+    ОстУтро и остаток наличных на начало дня заново берутся из него, даже если их правили вручную.
+    Остальное вписанное вручную остаётся: Приход, Долг, Имя, Списание, Причина, строки персонала
+    и весь кассовый лист. Без `prev` ОстУтро и наличные не трогаются.
     """
     output = output or existing
     wb = openpyxl.load_workbook(existing)
+    opening_changed: list[str] = []
+    if prev is not None:
+        opening_changed, _ = _apply_opening(wb, prev, section_rows, staff_rows)
     ws = get_snack_sheet(wb)
     lay = detect_layout(ws, section_rows, staff_rows)
     sold, new_names, skipped = _match_sales(sales, lay, aliases, ignored)
-    result = BuildResult(output=output, source=existing, from_template=False, added=list(new_names.values()),
-                         ignored=skipped, rebuilt=True)
+    result = BuildResult(output=output, source=prev or existing, from_template=False,
+                         added=list(new_names.values()), ignored=skipped, rebuilt=True,
+                         opening_changed=opening_changed)
     if new_names:
         _insert_items(ws, lay, list(new_names.values()))
         lay = detect_layout(ws, section_rows, staff_rows)
@@ -429,16 +437,16 @@ def rebuild_report(
     return result
 
 
-def refresh_opening(
-    report: Path,
+def _apply_opening(
+    wb,
     prev: Path,
-    section_rows: tuple[str, ...] = DEFAULT_SECTION_ROWS,
-    staff_rows: tuple[str, ...] = DEFAULT_STAFF_ROWS,
-) -> list[str]:
-    """Обновляет ОстУтро и остаток наличных на начало дня по предыдущему отчёту (после пересоздания).
+    section_rows: tuple[str, ...],
+    staff_rows: tuple[str, ...],
+) -> tuple[list[str], bool]:
+    """Ставит в книгу ОстУтро (= вчерашний ОстВечер) и остаток наличных на начало дня из `prev`.
 
     Товары, появившиеся в предыдущем отчёте, добавляются строками. Остальное не трогается.
-    Файл сохраняется, только если что-то поменялось. Возвращает, что поменялось.
+    Возвращает (что поменялось, добавлены ли строки).
     """
     wb_prev = openpyxl.load_workbook(prev)
     wb_prev_values = openpyxl.load_workbook(prev, data_only=True)
@@ -446,7 +454,6 @@ def refresh_opening(
     lay_p = detect_layout(ws_p, section_rows, staff_rows)
     evening = {k: max(evening_value(ws_p, ws_pv, lay_p.cols, r), 0.0) for k, r in lay_p.item_rows.items()}
 
-    wb = openpyxl.load_workbook(report)
     ws = get_snack_sheet(wb)
     lay = detect_layout(ws, section_rows, staff_rows)
     missing = [lay_p.item_names[k] for k, _ in sorted(lay_p.item_rows.items(), key=lambda kv: kv[1])
@@ -478,9 +485,24 @@ def refresh_opening(
         if not isinstance(cur, (int, float)) or isinstance(cur, bool) or float(cur) != opening:
             cash[OPENING_CELL].value = int(opening) if float(opening).is_integer() else round(opening, 2)
             changed.append("остаток наличных на начало дня")
+    return changed, bool(missing)
 
+
+def refresh_opening(
+    report: Path,
+    prev: Path,
+    section_rows: tuple[str, ...] = DEFAULT_SECTION_ROWS,
+    staff_rows: tuple[str, ...] = DEFAULT_STAFF_ROWS,
+) -> list[str]:
+    """Обновляет ОстУтро и остаток наличных на начало дня по предыдущему отчёту (после пересоздания).
+
+    Файл сохраняется, только если что-то поменялось. Возвращает, что поменялось.
+    """
+    wb = openpyxl.load_workbook(report)
+    changed, added = _apply_opening(wb, prev, section_rows, staff_rows)
     if changed:
-        if missing:
-            _reset_negative_highlight(ws, lay)
+        if added:
+            ws = get_snack_sheet(wb)
+            _reset_negative_highlight(ws, detect_layout(ws, section_rows, staff_rows))
         wb.save(report)
     return changed

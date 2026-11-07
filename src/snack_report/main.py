@@ -197,9 +197,11 @@ def _build(job: Job, s: dict, folder: Path, out: Path, prev: Path | None = None)
     return res
 
 
-def _rebuild(job: Job, s: dict, existing: Path) -> BuildResult:
+def _rebuild(job: Job, s: dict, folder: Path, existing: Path) -> BuildResult:
     log.info("%s → пересоздание %s", job.ucs_path.name, existing.name)
+    prev = find_previous_report(folder, job.ucs.date)  # нет — ОстУтро и наличные остаются как есть
     res = rebuild_report(
+        prev=prev,
         date=job.ucs.date,
         sales=job.ucs.sales,
         existing=existing,
@@ -266,6 +268,10 @@ def _describe(res: BuildResult, ucs_name: str) -> list[str]:
     fmt = lambda x: f"{x:g}"  # noqa: E731
     if res.rebuilt:
         lines = [f"{res.output.name}  ← {ucs_name}  (пересоздан, вписанное вручную сохранено)"]
+        if res.source != res.output:
+            lines.append(f"  Остатки на утро и наличные на начало дня из: {res.source.name}")
+        if res.opening_changed:
+            lines.append(f"  Обновлено из прошлого отчёта: {', '.join(res.opening_changed)}")
     else:
         lines = [f"{res.output.name}  ← {ucs_name}"]
         if res.from_template:
@@ -339,7 +345,7 @@ def _run_folder(s: dict, folder: Path, ui: Ui) -> int:
         job = jobs[d]
         try:
             if d in existing:
-                res = _rebuild(job, s, existing[d])
+                res = _rebuild(job, s, folder, existing[d])
             else:
                 res = _build(job, s, folder, report_path(folder, d))
         except PermissionError:
@@ -382,7 +388,7 @@ def _run_single(args, s: dict, folder: Path, ui: Ui) -> int:
     existing = find_reports(folder).get(job.ucs.date)
     try:
         if existing:  # отчёт уже есть — пересоздаём, вписанное вручную сохраняется
-            res = _rebuild(job, s, existing)
+            res = _rebuild(job, s, folder, existing)
         else:
             res = _build(job, s, folder, report_path(folder, job.ucs.date), args.prev)
     except PermissionError:

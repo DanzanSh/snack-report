@@ -48,7 +48,11 @@ any folder\
 If a report for a day is already made and you get a new UCS export for that day, put the new export into `report` and launch the program
 (or drag it onto the exe). The report is rebuilt:
 - Продано is taken from the new export; new items get their own rows.
-- Everything entered by hand stays: ОстУтро, Приход, Долг, Имя, Списание, Причина, staff rows and the whole cash sheet.
+- ОстУтро and «Остаток наличных на начала дня» are taken again from the previous report (its ОстВечер and
+  «Остаток наличных на конец дня»), so changes made there since (Приход, Списание, cash) are picked up.
+  A hand correction of these cells in the rebuilt report is overwritten; the window lists what changed.
+  If there is no previous report (the first one), they stay as they are.
+- Everything else entered by hand stays: Приход, Долг, Имя, Списание, Причина, staff rows and the rest of the cash sheet.
 - Reports for later days are updated in a chain: their ОстУтро (from the previous day's ОстВечер) and «Остаток наличных на начала дня».
   Everything else in them stays. If ОстУтро was corrected by hand in a later report, that correction is overwritten.
 - If the report is open in Excel, nothing is saved: close the file and launch again (the export stays in `report`).
