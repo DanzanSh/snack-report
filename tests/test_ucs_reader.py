@@ -16,7 +16,13 @@ def test_reads_services_only():
         "Вода 0.5": 3,
         "Вода 1,5 л": 1,
         "соки грацио стекло": 1,
-    }  # платежи (QR-код, наличные) не попадают
+    }  # платежи (QR-код, наличные) в продажи не попадают
+    assert (rep.cash, rep.noncash) == (20000, 174400)
+
+
+def test_reads_payments_of_visits_export():
+    rep = read_ucs(Path(__file__).parent / "fixtures" / "visits.xls")
+    assert (rep.cash, rep.noncash) == (72000, 202350)
 
 
 def test_not_an_ucs_file(tmp_path):

@@ -3,14 +3,14 @@
 Converts the UCS Shelter export «Сводка по доходу» (`.xls`) into the «Ежедневный отчет о наличии снеков и напитков» daily report (`.xlsx`).
 
 Each daily report has two sheets:
-1. **Ежедневный кассовый отчет**: date, «Дорожные» = 1000 (always), «Остаток наличных на начала дня» (`наличные`) is taken from the previous report's «Остаток наличных на конец дня». The rest (other expenses and their notes, cash, non-cash, приход, предоплаты, инкасация, администратор, тех персонал, охрана) is cleared every day and filled in by hand.
+1. **Ежедневный кассовый отчет**: date, «Дорожные» = 1000 (always), «Остаток наличных на начала дня» (`наличные`) is taken from the previous report's «Остаток наличных на конец дня». «Наличные» and «Безнал» come from the «Платежи» block of the UCS export («Наличный расчет» and «Безналичный расчет»); if an export has no such block, they are left empty and filled in by hand. The rest (other expenses and their notes, приход, предоплаты, инкасация, администратор, тех персонал, охрана) is cleared every day and filled in by hand.
 2. **Наличие снеков и напитков**: the stock report (Excel limits sheet names to 31 characters, so the full title «Ежедневный отчет о наличии снеков и напитков» is the heading inside the sheet).
 
 If a previous report has no cash sheet (older format), one is added and the opening cash is entered by hand.
 
 What the script does for the stock sheet:
 - **ОстУтро**: today's opening stock (ОстУтро) is copied from yesterday's report (its ОстВечер column). If yesterday's ОстВечер is negative, ОстУтро starts at 0.
-- **Продано**: the sold count comes from the «Услуги» block of the UCS export. Payments are ignored.
+- **Продано**: the sold count comes from the «Услуги» block of the UCS export.
   When UCS names an item differently from the report (e.g. «Вода 1 л» → «Вода 1»), the sale goes into the report's row; see «Item names» below.
 - **ОстВечер**: a formula, `ОстУтро + Приход − Продано − Списание` (Долг is not subtracted, as in the reference report). It recalculates when you enter Приход or Списание by hand. Negative values are highlighted in red.
 - **Приход, Долг, Имя, Списание, Причина**: cleared every day and filled in by hand.
@@ -48,6 +48,7 @@ any folder\
 If a report for a day is already made and you get a new UCS export for that day, put the new export into `report` and launch the program
 (or drag it onto the exe). The report is rebuilt:
 - Продано is taken from the new export; new items get their own rows.
+- «Наличные» and «Безнал» on the cash sheet are taken from the new export's «Платежи» (if it has that block).
 - ОстУтро and «Остаток наличных на начала дня» are taken again from the previous report (its ОстВечер and
   «Остаток наличных на конец дня»), so changes made there since (Приход, Списание, cash) are picked up.
   A hand correction of these cells in the rebuilt report is overwritten; the window lists what changed.

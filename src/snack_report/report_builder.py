@@ -22,6 +22,7 @@ from .cash_report import (
     closing_cash,
     ensure_sheets,
     fill_cash,
+    fill_payments,
     get_cash_sheet,
     get_snack_sheet,
 )
@@ -291,6 +292,8 @@ class BuildResult:
     unsplit: list[str] = field(default_factory=list)        # услуги UCS, не разнесённые по цене
     cash_opening: float | None = None   # остаток наличных на начало дня; None — вносят вручную
     rebuilt: bool = False               # пересоздан по новой выгрузке, вписанное вручную сохранено
+    cash_in: float | None = None        # «Наличные» из UCS
+    noncash: float | None = None        # «Безнал» из UCS
     opening_changed: list[str] = field(default_factory=list)  # при пересоздании: что обновилось из прошлого отчёта
 
 
@@ -305,6 +308,8 @@ def build_report(
     staff_rows: tuple[str, ...] = DEFAULT_STAFF_ROWS,
     aliases: dict[str, str] = DEFAULT_ALIASES,
     ignored: tuple[str, ...] = DEFAULT_IGNORED,
+    cash_in: float | None = None,
+    noncash: float | None = None,
 ) -> BuildResult:
     """
     source — вчерашний отчёт (ОстУтро = вчерашний ОстВечер)
@@ -370,7 +375,9 @@ def build_report(
         opening = closing_cash(prev_cash, prev_cash_values)
     cash_ws, _ = ensure_sheets(wb)
     fill_cash(cash_ws, date, opening)
+    fill_payments(cash_ws, cash_in, noncash)
     result.cash_opening = opening
+    result.cash_in, result.noncash = cash_in, noncash
 
     _reset_negative_highlight(ws, lay)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -389,13 +396,16 @@ def rebuild_report(
     aliases: dict[str, str] = DEFAULT_ALIASES,
     ignored: tuple[str, ...] = DEFAULT_IGNORED,
     prev: Path | None = None,
+    cash_in: float | None = None,
+    noncash: float | None = None,
 ) -> BuildResult:
     """Пересоздаёт уже готовый отчёт по новой выгрузке UCS.
 
-    Меняется «Продано» (и добавляются строки новых товаров). Если есть предыдущий отчёт `prev`,
+    Меняется «Продано» (и добавляются строки новых товаров), а в кассовом листе — «Наличные» и «Безнал»
+    из блока «Платежи» (если он есть в выгрузке). Если есть предыдущий отчёт `prev`,
     ОстУтро и остаток наличных на начало дня заново берутся из него, даже если их правили вручную.
     Остальное вписанное вручную остаётся: Приход, Долг, Имя, Списание, Причина, строки персонала
-    и весь кассовый лист. Без `prev` ОстУтро и наличные не трогаются.
+    и остальной кассовый лист. Без `prev` ОстУтро и наличные не трогаются.
     """
     output = output or existing
     wb = openpyxl.load_workbook(existing)
@@ -428,6 +438,8 @@ def rebuild_report(
     _fill_staff_sold(ws, lay, sold, result)
 
     cash_ws, _ = ensure_sheets(wb)
+    fill_payments(cash_ws, cash_in, noncash)
+    result.cash_in, result.noncash = cash_in, noncash
     opening = cash_ws[OPENING_CELL].value
     result.cash_opening = float(opening) if isinstance(opening, (int, float)) and not isinstance(opening, bool) \
         else None

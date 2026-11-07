@@ -191,3 +191,10 @@ def fill_cash(ws: Worksheet, date: dt.date, opening: float | None) -> None:
     ws[ADMIN_CELL].value = LABELS[ADMIN_CELL]
     for coord, formula in FORMULAS.items():
         ws[coord].value = formula
+
+
+def fill_payments(ws: Worksheet, cash: float | None, noncash: float | None) -> None:
+    """«Наличные» и «Безнал» из блока «Платежи» выгрузки UCS. None — ячейку не трогаем."""
+    for coord, v in ((CASH_IN_CELL, cash), (NONCASH_CELL, noncash)):
+        if v is not None:
+            ws[coord].value = int(v) if float(v).is_integer() else round(v, 2)

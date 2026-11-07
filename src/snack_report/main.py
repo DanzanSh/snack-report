@@ -190,6 +190,8 @@ def _build(job: Job, s: dict, folder: Path, out: Path, prev: Path | None = None)
         staff_rows=s["staff_rows"],
         aliases=s["aliases"],
         ignored=s["ignored"],
+        cash_in=job.ucs.cash,
+        noncash=job.ucs.noncash,
     )
     res.ignored = job.ucs.ignored + res.ignored
     res.unsplit = list(job.ucs.unsplit)
@@ -202,6 +204,8 @@ def _rebuild(job: Job, s: dict, folder: Path, existing: Path) -> BuildResult:
     prev = find_previous_report(folder, job.ucs.date)  # нет — ОстУтро и наличные остаются как есть
     res = rebuild_report(
         prev=prev,
+        cash_in=job.ucs.cash,
+        noncash=job.ucs.noncash,
         date=job.ucs.date,
         sales=job.ucs.sales,
         existing=existing,
@@ -282,6 +286,10 @@ def _describe(res: BuildResult, ucs_name: str) -> list[str]:
             lines.append(f"  Остаток наличных на начало дня: {fmt(res.cash_opening)}")
         else:
             lines.append("  Кассовый отчёт: впишите «Остаток наличных на начала дня» вручную.")
+    if res.cash_in is not None or res.noncash is not None:
+        lines.append(f"  Касса из UCS: наличные {fmt(res.cash_in or 0)}, безнал {fmt(res.noncash or 0)}")
+    else:
+        lines.append("  В выгрузке нет блока «Платежи»: впишите «Наличные» и «Безнал» вручную.")
     lines.append(f"  Продано: {', '.join(f'{n} {fmt(q)}' for n, q in res.filled) or 'нет продаж'}")
     if res.ignored:
         lines.append(f"  Не учитываются (абонементы): {', '.join(res.ignored)}")

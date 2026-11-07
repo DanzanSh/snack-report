@@ -26,8 +26,8 @@ def folder(tmp_path, monkeypatch):
     exports: dict[str, UcsReport] = {}
     monkeypatch.setattr(main_mod, "read_ucs", lambda p, *_, **__: exports[Path(p).name])
 
-    def put(name, date, sales):
-        exports[name] = UcsReport(date, dict(sales))
+    def put(name, date, sales, cash=None, noncash=None):
+        exports[name] = UcsReport(date, dict(sales), cash=cash, noncash=noncash)
         shutil.copy(FIXTURE, f / name)
 
     return f, put
@@ -168,3 +168,21 @@ def test_rebuild_takes_opening_from_previous_day(folder):
     cash = get_cash_sheet(wb)
     assert cash["C5"].value == c5_1 + 3000 - 1000
     assert cash["C17"].value == 700
+
+
+def test_rebuild_takes_cash_and_noncash_from_payments(folder):
+    folder, put = folder
+    put("d1.xls", D1, {"Вода 0.5": 3}, cash=1000, noncash=2000)
+    put("d2.xls", D2, {})
+    assert run(["--console", "--out", str(folder)]) == 0
+    p1, p2 = report_path(folder, D1), report_path(folder, D2)
+    cash = get_cash_sheet(openpyxl.load_workbook(p1))
+    assert (cash["C17"].value, cash["C18"].value) == (1000, 2000)
+    c5_2 = get_cash_sheet(openpyxl.load_workbook(p2))["C5"].value
+
+    put("d1.xls", D1, {"Вода 0.5": 4}, cash=1500, noncash=2500.5)
+    assert run(["--console", "--out", str(folder)]) == 0
+    cash = get_cash_sheet(openpyxl.load_workbook(p1))
+    assert (cash["C17"].value, cash["C18"].value) == (1500, 2500.5)
+    # наличные на начало следующего дня — с учётом новой суммы
+    assert get_cash_sheet(openpyxl.load_workbook(p2))["C5"].value == c5_2 + 500

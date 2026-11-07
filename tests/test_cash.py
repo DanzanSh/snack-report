@@ -71,7 +71,8 @@ def test_next_day_carries_cash_and_resets_the_rest(tmp_path, day):
     assert c2["B3"].value.date() == dt.date(2026, 10, 29)
     assert c2["C7"].value == 1000
     assert c2["B8"].value is None and c2["C8"].value is None and c2["D8"].value is None
-    assert c2["C17"].value is None and c2["C18"].value is None and c2["C20"].value is None
+    assert (c2["C17"].value, c2["C18"].value) == (20000, 174400)   # из «Платежей» выгрузки
+    assert c2["C20"].value is None
     assert c2["D3"].value.strip() == "Администратор"
     assert c2["C25"].value is None and c2["C26"].value is None
 

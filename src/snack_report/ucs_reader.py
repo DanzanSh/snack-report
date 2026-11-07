@@ -16,6 +16,8 @@ DEFAULT_IGNORED_GROUPS = ("Посещения",)
 DEFAULT_PRICE_SPLIT = {
     "Разовые зал Бокс": {4000.0: "Разовые посещения зал", 5000.0: "Разовое Бокс"},
 }
+# Подгруппы блока «Платежи» -> поле UcsReport (сумма идёт в кассовый лист)
+PAYMENT_GROUPS = {"безналичныйрасчет": "noncash", "наличныйрасчет": "cash"}
 
 
 class UcsFormatError(Exception):
@@ -28,6 +30,8 @@ class UcsReport:
     sales: dict[str, float] = field(default_factory=dict)  # название услуги -> кол-во
     ignored: list[str] = field(default_factory=list)  # услуги из пропущенных групп
     unsplit: list[str] = field(default_factory=list)  # не удалось разнести по цене (описание строки)
+    cash: float | None = None     # «Наличный расчет» из блока «Платежи»; None — блока нет
+    noncash: float | None = None  # «Безналичный расчет» из блока «Платежи»
 
 
 def _text(sheet, r: int, c: int) -> str:
@@ -120,20 +124,29 @@ def read_ucs(path: str | Path, ignored_groups=DEFAULT_IGNORED_GROUPS, price_spli
     skip_keys = {g.strip().lower() for g in ignored_groups}
     splits = {_key(k): v for k, v in (DEFAULT_PRICE_SPLIT if price_split is None else price_split).items()}
     keep_keys = {_key(k) for k in keep}
-    in_services = False
+    in_services = in_payments = False
     seen_services = False
     group = ""
     for r in range(header_row + 1, sheet.nrows):
         first = _text(sheet, r, 0)
-        if first == "Услуги":
-            in_services = seen_services = True
+        if first in ("Услуги", "Платежи"):
+            in_services, in_payments = first == "Услуги", first == "Платежи"
+            seen_services |= in_services
+            group = ""
+            if in_payments:
+                report.cash = report.cash or 0.0
+                report.noncash = report.noncash or 0.0
             continue
-        if first.startswith("Итого по группе"):
-            if in_services:
-                break
+        if first:  # «Итого по группе …» или другой блок
+            in_services = in_payments = False
             continue
-        if first:  # начался другой блок (например, «Платежи»)
-            in_services = False
+        if in_payments:
+            payment = _parse_sale_row(sheet, r)
+            if payment is None:
+                group = _group_name(sheet, r) or group
+            elif _key(group) in PAYMENT_GROUPS:
+                attr = PAYMENT_GROUPS[_key(group)]
+                setattr(report, attr, getattr(report, attr) + payment[2])
             continue
         if not in_services:
             continue
