@@ -12,7 +12,7 @@ from snack_report.layout import report_path, monthly_path
 from snack_report.main import run
 
 FIXTURE = Path(__file__).parent / "fixtures" / "test.xls"
-# В каждой выгрузке: Козинак МИНИ 1, Вода 0.5 3, Вода 1,5 л 1, соки грацио стекло 1
+# В каждой выгрузке: Козинак МИНИ 1 (→ Козинаки), Вода 0.5 3, Вода 1,5 л 1, соки грацио стекло 1
 
 DATES = {  # 31.10 пропущен, 02.11 пропущен
     "a.xls": dt.date(2026, 10, 29),
@@ -63,7 +63,7 @@ def test_monthly_totals_and_month_split(folder):
     assert run(["--console", "--out", str(folder)]) == 0
     # в первом отчёте администратор вписывает остатки на утро
     _set_morning(report_path(folder, dt.date(2026, 10, 29)), "Вода 0,5", 100)
-    _set_morning(report_path(folder, dt.date(2026, 10, 29)), "Козинак МИНИ", 10)
+    _set_morning(report_path(folder, dt.date(2026, 10, 29)), "Козинаки", 10)
 
     _add(folder, "b.xls", "c.xls", "d.xls")
     assert run(["--console", "--out", str(folder)]) == 0
@@ -71,7 +71,7 @@ def test_monthly_totals_and_month_split(folder):
     ws, oct_ = _month(monthly_path(folder, 2026, 10))
     # ОстНачало, Приход, Продано, Долг, Списание, ОстКонец
     assert oct_["Вода 0,5"] == [100, 0, 6, 0, 0, 94]
-    assert oct_["Козинак МИНИ"] == [10, 0, 2, 0, 0, 8]
+    assert oct_["Козинаки"] == [10, 0, 2, 0, 0, 8]
     assert oct_["Банан"] == [0, 0, 0, 0, 0, 0]
     assert oct_["ИТОГО"][2].startswith("=SUM(")
     assert "Нет отчётов" not in str(ws["A3"].value)  # выходные и праздники — не пропуск

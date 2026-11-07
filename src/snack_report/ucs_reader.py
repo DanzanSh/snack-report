@@ -102,7 +102,7 @@ def _find_date(sheet) -> dt.date:
 
 
 def _key(name: str) -> str:
-    return " ".join(str(name).lower().replace("ё", "е").split())
+    return "".join(str(name).lower().replace("ё", "е").split())
 
 
 def read_ucs(path: str | Path, ignored_groups=DEFAULT_IGNORED_GROUPS, price_split=None,

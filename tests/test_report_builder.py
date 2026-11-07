@@ -43,11 +43,21 @@ def template(tmp_path):
 def test_normalize():
     assert normalize("  Вода  1,5 ") == normalize("вода 1.5")
     assert normalize("Ёлка") == "елка"
+    assert normalize("Протеин 30 гр") == normalize("протеин 30гр")
 
 
-def test_first_run_and_next_day(tmp_path, template):
+def test_first_run_and_next_day(tmp_path, template, monkeypatch):
     out = tmp_path / "reports"
+    orig = main_mod.read_ucs
+
+    def with_new_item(p, *a, **kw):
+        rep = orig(p, *a, **kw)
+        rep.sales["Новинка"] = 1
+        return rep
+
+    monkeypatch.setattr(main_mod, "read_ucs", with_new_item)
     assert run([str(FIXTURE), "--console", "--out", str(out), "--prev", str(template)]) == 0
+    monkeypatch.setattr(main_mod, "read_ucs", orig)
     day1 = report_path(out, dt.date(2026, 10, 28))
     ws, row = _rows(day1)
     assert ws["A1"].value.date() == dt.date(2026, 10, 28)
@@ -63,14 +73,16 @@ def test_first_run_and_next_day(tmp_path, template):
     assert ws.cell(row["Вода 1,5"], 4).value == 1
     assert "Вода 1,5 л" not in row
 
-    # Остальные названия UCS добавлены как есть, перед «Прочее», а «Козинаки» не тронуты
-    new = ["Козинак МИНИ", "соки грацио стекло"]
-    assert [row[n] for n in new] == [row["Прочее"] - 2, row["Прочее"] - 1]
-    assert row[new[0]] == row["Зефир 1000"] + 1
-    for n in new:
-        assert ws.cell(row[n], 4).value == 1
-        assert ws.cell(row[n], 9).value == f"=C{row[n]}+B{row[n]}-D{row[n]}-G{row[n]}"
-    assert ws.cell(row["Козинаки"], 4).value is None
+    # «Козинак МИНИ» и «соки грацио стекло» — через сопоставление в строки отчёта
+    assert ws.cell(row["Козинаки"], 4).value == 1
+    assert ws.cell(row["Сок Грацио стекло 0.2"], 4).value == 1
+    assert "Козинак МИНИ" not in row and "соки грацио стекло" not in row
+
+    # Незнакомое название UCS добавлено как есть, перед «Прочее»
+    n = "Новинка"
+    assert row[n] == row["Прочее"] - 1 == row["Зефир 1000"] + 1
+    assert ws.cell(row[n], 4).value == 1
+    assert ws.cell(row[n], 9).value == f"=C{row[n]}+B{row[n]}-D{row[n]}-G{row[n]}"
     # формулы ниже вставки указывают на свои строки
     rp = row["Рис курица"]
     assert ws.cell(rp, 9).value == f"=C{rp}+B{rp}-D{rp}-G{rp}"
@@ -82,7 +94,7 @@ def test_first_run_and_next_day(tmp_path, template):
     # Администратор вносит приход и списание за 28.10 и имя смены
     ws.cell(r, 2).value = 10
     ws.cell(r, 7).value = 2
-    ws.cell(row["Козинак МИНИ"], 2).value = 5
+    ws.cell(row["Козинаки"], 2).value = 5
     ws.cell(row["Охрана"], 8).value = "Жанат"
     ws.parent.save(day1)
 
@@ -104,7 +116,7 @@ def test_first_run_and_next_day(tmp_path, template):
     r2 = row2["Вода 0,5"]
     assert ws2.cell(r2, 3).value == 253 + 10 - 3 - 2  # ОстУтро = вчерашний ОстВечер
     assert ws2.cell(r2, 2).value is None and ws2.cell(r2, 7).value is None
-    assert ws2.cell(row2["Козинак МИНИ"], 3).value == 5 - 1
+    assert ws2.cell(row2["Козинаки"], 3).value == 5 - 1
     assert len(row2) == len(row)  # повторно строки не добавляются
     assert ws2.cell(row2["Охрана"], 8).value is None
 
@@ -238,17 +250,23 @@ def test_aliases_sum_into_report_row(tmp_path, template):
         date=dt.date(2026, 11, 4),
         sales={"протеиновый коктейль (на молоке)": 3, "протеиновый коктейль на воде": 1, "Протеин порц": 2,
                "Протеин 30гр": 4, "Акция 3 посещения": 1, "Безлимит 1 месяц до 17-00": 2,
-               "Разовые посещения зал": 5, "Козинак МИНИ": 1},
+               "Разовые посещения зал": 5, "Козинак МИНИ": 1, "Новинка": 1,
+               "Гейнер на воде": 1, "Гейнер на Молоке": 2, "Протеин 900 gr": 1, "Молоко": 3,
+               "ПРОТЕИН В ПАЧКАХ ШТУЧНО": 1, "BCA 300грамм большой": 1},
         source=template, from_template=True, output=out,
     )
     ws, row = _rows(out)
     assert ws.cell(row["Протеин порц"], 4).value == 6
     assert ws.cell(row["Протеин в пачках штучно"], 4).value == 4
     # абонементы не попадают в отчёт, «Разовые посещения зал» — строка отчёта
-    assert res.ignored == ["Акция 3 посещения", "Безлимит 1 месяц до 17-00"]
+    assert res.ignored == ["Акция 3 посещения", "Безлимит 1 месяц до 17-00", "Молоко",
+                           "ПРОТЕИН В ПАЧКАХ ШТУЧНО", "BCA 300грамм большой"]
     assert "Акция 3 посещения" not in row and "Безлимит 1 месяц до 17-00" not in row
     assert ws.cell(row["Разовые посещения зал"], 4).value == 5
-    assert res.added == ["Козинак МИНИ"]  # незнакомое название — новая строка
+    assert ws.cell(row["Козинаки"], 4).value == 1
+    assert ws.cell(row["Гейнер"], 4).value == 3
+    assert ws.cell(row["Протеин оптом"], 4).value == 1  # пробелы не важны: «900 gr» = «900gr»
+    assert res.added == ["Новинка"]  # незнакомое название — новая строка
 
 
 def test_lost_card_goes_to_staff_row(tmp_path, template):

@@ -80,7 +80,7 @@ def test_export_for_existing_report_is_rebuilt_and_archived(folder):
     ws = get_snack_sheet(openpyxl.load_workbook(day))
     row = {ws.cell(r, 1).value: r for r in range(3, ws.max_row + 1)}
     assert ws.cell(row["Вода 0,5"], 4).value == 3
-    assert list(row).count("Козинак МИНИ") == 1        # новые строки не задвоились
+    assert ws.cell(row["Козинаки"], 4).value == 1     # продажи не задвоились
 
 
 def test_old_flat_folder_is_migrated(folder):
