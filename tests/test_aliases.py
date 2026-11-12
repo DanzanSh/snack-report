@@ -59,6 +59,7 @@ def test_settings_ini_repeats_builtin_aliases():
     ("Протеин Леврон Черный 2кг", "Протеин оптом"),
     ("Креатин порция", "Креатин порц"),
     ("Вода 0.5", "Вода 0,5"),
+    ("Баточники 1200", "Батончик 1200"),
 ])
 def test_alias_sale_goes_to_existing_row(tmp_path, ucs_name, row):
     tpl = tmp_path / "template.xlsx"
